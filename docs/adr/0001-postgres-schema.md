@@ -158,3 +158,59 @@ applied in dependency order:
 - All-or-nothing validation is a single `coi_validations` row with `result`.
 - Idempotency is a first-class table, not an ad-hoc key — 0004 builds on it.
 - Renewal history is queryable via `coi_documents.version_number` chain.
+
+## Amendment (2026-07-18): four gaps resolved after backend build
+
+Companion to ADR 0002's amendment (state-machine side) and ADR 0004's
+amendment (tool-contract side) — same four items from `backend/README.md`'s
+"Known gaps," resolved together.
+
+**4. `rowan_system` grant, corrected and ratified.** The original text above
+("the org-enumeration query only... nothing tenant-scoped") was incomplete:
+it named the scheduler's read path but not the inbound-webhook's, which
+also has to run before any org context exists (the webhook has no JWT to
+derive `app.current_org` from — it has only a `reply_token` from the email
+body). backend-engineer's extension is the correct minimal grant and is
+ratified as the design:
+
+```sql
+grant select on organizations to rowan_system;
+grant select (id, organization_id, reply_token, reply_token_expires_at, status)
+  on runs to rowan_system;
+```
+
+plus a permissive RLS policy scoped to the `rowan_system` role only, on each
+of those two tables, allowing an unfiltered `SELECT` (`organizations` for
+org-enumeration; `runs` for reply-token resolution). This is safe because:
+(a) it is **column-restricted** on `runs` — `rowan_system` cannot read
+`coi_document_id`, `outreach_email_count`, or any other tenant business
+data through this grant, only the five columns needed to resolve
+`reply_token → run_id → organization_id` and check token expiry/run status;
+(b) it is **row-unfiltered but not table-unfiltered** — the role has no
+grant at all on any other tenant table, so there is no general bypass, only
+these two narrow reads; (c) `rowan_app` (the request-path role) is
+untouched — this grant adds no visibility to normal request handling, only
+to the two system paths (scheduler tick, webhook) that must run before a
+tenant context exists. The `runs(reply_token)` unique index (already listed
+above) backs this lookup. Both grant and policy live in
+`migrations/0008_rls.sql`, already implemented as described.
+
+**3. `runs.llm_call_count` reset semantics, specified.** The schema above
+lists `llm_call_count int default 0` on `runs` without saying when it
+resets — ADR 0002's `MAX_LLM_PER_DOC` cap is per-document, but this is a
+single run-level counter, not a per-document table. Resolved: it resets to
+`0` whenever a new `coi_document_id` transitions `document_received →
+parsing` (i.e. a fresh document — including a re-submitted one after a
+PM-requested revision — gets a fresh per-document LLM budget). It is NOT
+reset at any other transition. `cost_cents_spent` (also on `runs`) is a
+**separate, run-cycle-scoped** counter and must NOT be reset alongside it —
+see ADR 0002's and ADR 0004's amendments for the bug this conflation caused
+in the initial build and the one-line fix. `# ASSUMPTION: a per-document
+counter stays a reset-on-transition run-level column rather than a separate
+`coi_document_id`-keyed table, to avoid adding a table for a value that only
+ever needs "current document's count" — acceptable because there is at most
+one document actively in `parsing` per run at a time (locked all-or-nothing
+scoping). Revisit if v2 ever parses documents concurrently within one run.`
+
+**1. `revision_request` budget scoping** and **2. no new `classify_document`
+tool** — no schema change; see ADR 0002's and ADR 0004's amendments.

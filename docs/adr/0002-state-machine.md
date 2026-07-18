@@ -82,20 +82,27 @@ Legend: triggers are `scheduler` (timer tick), `webhook` (inbound email),
   OR `now >= due_date + RESPONSE_DEADLINE_DAYS` (reason `no_response`).
 
 ### `document_received`
-- **Allowlist:** classify+store document, `escalate_to_pm`, transition→parsing.
-- **→ parsing** [tool] guard: attachment stored (`coi_documents`), passed
-  file-type/size + PII-redaction pre-LLM guardrails, and classifier says "COI".
-- **→ needs_human_review** [tool] guard: classifier says not-a-COI / unreadable
-  (reason `unclassifiable_document`).
+- **Allowlist:** `classify_and_store_document` (deterministic: store +
+  file-type/size + PII-redaction pre-LLM guardrails only — see Amendment
+  (2026-07-18)), `escalate_to_pm`, transition→parsing.
+- **→ parsing** [tool] guard: attachment stored (`coi_documents`) AND passed
+  file-type/size + PII-redaction pre-LLM guardrails. Content classification
+  ("is this actually a COI") is deferred to `parsing` — see below.
+- **→ needs_human_review** [tool] guard: file is stored but structurally
+  unreadable/corrupt at the deterministic layer (reason
+  `unclassifiable_document`). This is the narrow, pre-LLM case only; the
+  broader "wrong document type" judgment happens in `parsing`.
 
 ### `parsing`
-- **Allowlist:** `parse_document` (LLM extraction), transition.
-- **→ validating** [tool] guard: extraction schema-valid AND
-  `overall_confidence >= CONFIDENCE_THRESHOLD` AND
-  `llm_call_count(this doc) <= MAX_LLM_PER_DOC`.
-- **→ needs_human_review** [tool] guard: schema-invalid OR sub-threshold
-  confidence OR extraction budget exhausted (reason `low_confidence_extraction`).
-  **Never guesses a field.**
+- **Allowlist:** `parse_document` (LLM — two sub-passes, classify then
+  extract, see Amendment (2026-07-18)), transition.
+- **→ validating** [tool] guard: classify pass confirms COI type AND extract
+  pass is schema-valid AND `overall_confidence >= CONFIDENCE_THRESHOLD` AND
+  `llm_calls_this_doc <= MAX_LLM_PER_DOC` (budget covers both passes combined).
+- **→ needs_human_review** [tool] guard: classify pass says not-a-COI /
+  sub-threshold (reason `unclassifiable_document`) OR extract pass
+  schema-invalid / sub-threshold confidence OR per-document LLM budget
+  exhausted (reason `low_confidence_extraction`). **Never guesses a field.**
 
 ### `validating`  (deterministic — no LLM decides pass/fail)
 - **Allowlist:** run deterministic validation, faithfulness check,
@@ -126,7 +133,9 @@ Legend: triggers are `scheduler` (timer tick), `webhook` (inbound email),
   recorded as `human_intervention`). This is the human-approval path for
   consequential completion.
 - **→ awaiting_vendor_response** [human] guard: PM `request_revision` → sends a
-  revision-request `send_email` (if outreach budget remains), else escalate.
+  revision-request `send_email` (if outreach budget remains — `revision_request`
+  IS vendor-outreach and counts against `MAX_OUTREACH`, see Amendment
+  (2026-07-18)), else escalate.
 - **→ escalated_to_pm** [human] guard: PM `reject` without revision path
   (reason `rejected_by_pm`).
 
@@ -154,10 +163,10 @@ Legend: triggers are `scheduler` (timer tick), `webhook` (inbound email),
 | awaiting_vendor_response | document_received | webhook | valid attachment inbound |
 | awaiting_vendor_response | awaiting_vendor_response | scheduler | follow-up within budget |
 | awaiting_vendor_response | escalated_to_pm | scheduler | max outreach / deadline |
-| document_received | parsing | tool | stored + classified COI |
-| document_received | needs_human_review | tool | unclassifiable |
-| parsing | validating | tool | schema-valid + confident |
-| parsing | needs_human_review | tool | low confidence / budget out |
+| document_received | parsing | tool | stored + file guardrails passed |
+| document_received | needs_human_review | tool | corrupt/unreadable file |
+| parsing | validating | tool | classified COI + schema-valid + confident |
+| parsing | needs_human_review | tool | not-a-COI / low confidence / budget out |
 | validating | filed | tool | pass + faithful |
 | validating | needs_human_review | tool | fail / unfaithful / flag |
 | validating | escalated_to_pm | tool | no requirements on file |
@@ -179,3 +188,61 @@ Legend: triggers are `scheduler` (timer tick), `webhook` (inbound email),
   violations are observable (`guardrail_trip`) and fail safe (`errored`).
 - Budgets are enforced at guard evaluation, so no path can overspend.
 - Retrieval fallback and faithfulness are transition guards, not soft checks.
+
+## Amendment (2026-07-18): four gaps resolved after backend build
+
+Companion to ADR 0004's amendment (tool-contract side) and ADR 0001's
+amendment (schema/RLS side) — same four items, resolved together so all
+three ADRs agree.
+
+**1. `revision_request` counts against `MAX_OUTREACH` — ADR 0002 is
+authoritative over ADR 0004's old assumption text.** This ADR's
+`needs_human_review → awaiting_vendor_response` transition already gated
+`request_revision` on "(if outreach budget remains), else escalate" — that
+was always the intended behavior; ADR 0004's tool-contract assumption (which
+grouped `revision_request` with budget-exempt PM notices) was the stale one
+and has been corrected there. Reasoning: `revision_request` is a message to
+the *vendor* asking for a corrected document — it is vendor outreach by
+definition, however it was triggered (PM-initiated vs. scheduler-initiated
+makes no difference to the vendor's inbox or to the 3-email courtesy cap
+CLAUDE.md sets). Budget-exempt notices are only the ones that never leave
+the PM's inbox (`handled_notice`, `escalation_notice`).
+
+**2. No new `classify_document` tool; classification folded into
+`parsing`.** The `document_received` and `parsing` state definitions above
+are rewritten to reflect this: `document_received → parsing` is now guarded
+by deterministic storage/file-guardrail checks only (unconditional once
+those pass), and the actual "is this a COI" judgment — previously described
+vaguely as "classifier says COI" at the `document_received` boundary — now
+explicitly happens as the first LLM sub-pass inside `parsing`, gating
+`parsing → validating` / `parsing → needs_human_review` alongside the
+extraction pass. This keeps the tool count at six (per CLAUDE.md's tool
+list) and keeps classification as a prompt/eval concern owned by
+agent-engineer rather than a new side-effecting capability. See ADR 0004's
+amendment for the `parse_document` contract change (two sub-passes, one
+shared per-document LLM budget) and `backend/README.md`'s note that
+agent-engineer should extend `ExtractionEngine` (`app/tools/parse_document.py`)
+rather than build a new Protocol.
+`# ASSUMPTION: v1 may ship with backend-engineer's deterministic stopgap
+(any file passing type/size guardrails is treated as a COI candidate, with
+low extraction confidence catching non-COI documents downstream) until
+agent-engineer wires the real classify pass. This is an acceptable interim
+state — it still never guesses and still routes doubt to human review — not
+a design deviation.`
+
+**3. `llm_calls_this_doc` resets on new document; `cost_cents_spent` does
+NOT.** `MAX_LLM_PER_DOC` is, as named, a per-document cap — `runs.llm_call_count`
+correctly resets to 0 whenever a new `coi_document_id` enters `parsing`
+(covers both the classify and extract sub-passes together). `BUDGET_COST_CAP_CENTS`
+is a **per-run-cycle** cap per CLAUDE.md ("max configurable $ per run") and
+must accumulate across every document/re-parse within one run cycle, not
+reset per document — otherwise repeated PM-requested revisions could drive
+cumulative spend past the configured cap in unbounded increments. backend-
+engineer's current code resets both counters together in
+`advance_from_document_received`; per ADR 0004's amendment this is a one-line
+bug to fix (stop resetting `cost_cents_spent`), not an ADR disagreement.
+
+**4. `rowan_system`'s extended grant — see ADR 0001 Amendment.** No
+state-machine change; the webhook resolving `reply_token → run →
+organization_id` before the runner is invoked is a pre-orchestration
+concern.

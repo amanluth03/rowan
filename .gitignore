@@ -24,3 +24,6 @@ next-env.d.ts
 
 # Vercel
 .vercel/
+
+# Eval harness run output (regenerated every CI run; see tests/evals/metrics/report.py)
+tests/evals/.results/*.json
