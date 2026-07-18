@@ -92,8 +92,8 @@ export function VendorListClient({
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{formatVendorRole(v.role)}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {v.primaryPropertyName}
-                  <p className="text-xs">{v.primaryPropertyJurisdiction}</p>
+                  {v.primaryPropertyName ?? <span className="text-muted-foreground/70">No property on file</span>}
+                  {v.primaryPropertyJurisdiction ? <p className="text-xs">{v.primaryPropertyJurisdiction}</p> : null}
                 </TableCell>
                 <TableCell>
                   <ComplianceStatusBadge status={v.complianceStatus} />

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { PortfolioSnapshot } from "@/lib/mock/read-models";
+import type { PortfolioSnapshot } from "@/lib/api/read-models";
 import { formatCents } from "@/lib/format";
 import { cn } from "@/lib/utils";
 

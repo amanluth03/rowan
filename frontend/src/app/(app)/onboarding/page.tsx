@@ -1,6 +1,8 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
-import { getPropertyOptions, getVendorList } from "@/lib/mock/read-models";
+import { getPropertyOptions, getVendorList } from "@/lib/api/read-models";
+
+export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
   const [properties, vendors] = await Promise.all([getPropertyOptions(), getVendorList()]);

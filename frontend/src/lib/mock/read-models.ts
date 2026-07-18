@@ -54,7 +54,7 @@ function toDocumentRef(doc: CoiDocumentRecord): DocumentRef {
   };
 }
 
-function propertyLabel(propertyId: string): { name: string; jurisdiction: string } {
+function propertyLabel(propertyId: string | null): { name: string; jurisdiction: string } {
   const p = properties.find((x) => x.id === propertyId);
   if (!p) return { name: "Unknown property", jurisdiction: "—" };
   const jurisdiction = p.hoaName ? `${p.city}, ${p.state} · ${p.hoaName}` : `${p.city}, ${p.state}`;

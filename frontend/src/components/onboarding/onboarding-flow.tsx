@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { AddVendorForm } from "./add-vendor-form";
 import { RequirementsBuilder } from "./requirements-builder";
 import { ImportCoiDropzone } from "./import-coi-dropzone";
-import type { PropertyOption } from "@/lib/mock/read-models";
+import type { PropertyOption } from "@/lib/api/read-models";
 
 interface VendorOption {
   id: string;

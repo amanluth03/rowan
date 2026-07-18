@@ -3,7 +3,9 @@ import { UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { VendorListClient } from "@/components/vendors/vendor-list-client";
-import { getVendorList } from "@/lib/mock/read-models";
+import { getVendorList } from "@/lib/api/read-models";
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorsPage({
   searchParams,

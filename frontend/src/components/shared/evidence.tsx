@@ -16,9 +16,18 @@ import { cn } from "@/lib/utils";
  * small components are the reusable "evidence chip" used across all five
  * screens so that link is never just implied.
  *
- * # ASSUMPTION: Supabase Storage isn't wired up yet, so "open document"
- * surfaces the stored path/filename rather than an actual file preview.
- * Swapping in a real signed URL is a one-line change once storage exists.
+ * SECURITY (carried forward from the backend integration review):
+ * `document.url` always points at this app's own `/api/documents/[id]`
+ * proxy route (`lib/api/read-models.ts::remapDocumentRef`), which forwards
+ * the backend's hardened download route -- real MIME type resolved
+ * server-side from the file extension, `nosniff`, served as `attachment`
+ * (see that route's docstring). `document.contentType` below is rendered as
+ * plain text ONLY (the attacker-controlled inbound MIME string, per the
+ * DocumentRef DTO) -- it must never be used to set a response header,
+ * construct an `<iframe>`/blob URL, or otherwise influence how the browser
+ * renders the file. The download itself is a plain same-origin `<a href>`
+ * to the proxy, opened in a new tab; the browser applies the proxy's own
+ * (safe) headers, never this field.
  */
 
 export function DocumentEvidenceChip({ document, label = "Source document" }: { document: DocumentRef; label?: string }) {
@@ -42,11 +51,17 @@ export function DocumentEvidenceChip({ document, label = "Source document" }: { 
             </div>
             <Badge variant="outline" className="shrink-0 text-[10px]">evidence</Badge>
           </div>
-          <div className="rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] text-muted-foreground break-all">
-            {document.url}
-          </div>
+          <a
+            href={document.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary underline underline-offset-2"
+          >
+            <FileText className="size-3.5" />
+            Open document
+          </a>
           <p className="text-[11px] text-muted-foreground">
-            This is the exact certificate Rowan read for the claims shown here. Storage preview isn&apos;t wired up in this build yet.
+            This is the exact certificate Rowan read for the claims shown here. Downloads as an attachment, not rendered inline, regardless of what the file claims to be.
           </p>
         </div>
       </PopoverContent>

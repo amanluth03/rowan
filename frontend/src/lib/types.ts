@@ -7,12 +7,27 @@
  * refs (document url, parsed values, source_citation). No DB rows leak; no
  * internal enums the UI shouldn't see.").
  *
- * # ASSUMPTION: ADR 0003 names the four DTOs and says they carry evidence
- * refs, but does not give exact field lists. The concrete shapes below are a
- * frontend-engineer design choice, built to make every rendered claim
- * traceable to evidence (document url / parsed value / source_citation) per
- * CLAUDE.md's brand section. Backend-engineer / architect should treat this
- * file as the frontend's proposal for the wire shape, not a ratified contract.
+ * RECONCILED (2026-07-18) against the real backend (`backend/app/api/schemas.py`,
+ * committed at `61061a1`) -- this file was originally written before that
+ * schema existed (flagged then as a proposal, not a ratified contract; see
+ * backend/README.md's "DTO shape notes for frontend-engineer"). Four real
+ * mismatches were found and fixed here rather than papered over with a cast:
+ *
+ * 1. `LineComparisonDTO.severity` / `FlagDTO.severity` -- narrowed from
+ *    `EventSeverity` to `ComparisonSeverity` (`"info" | "error"`, `"warn"`
+ *    never appears on these two fields; see `_dto_severity` in
+ *    `backend/app/api/read_models.py`).
+ * 2. `VendorStatusDTO.activeRun.dueDate` / `RunTraceDTO.dueDate` -- widened
+ *    to `string | null` (`runs.due_date` has no NOT NULL constraint; a
+ *    freshly onboarded vendor with no known current-COI expiry has
+ *    `due_date=NULL` until a document is filed or a PM sets one).
+ * 3. `VendorStatusDTO.primaryPropertyName` / `primaryPropertyJurisdiction` --
+ *    widened to `string | null` (`vendors.primary_property_id` is nullable).
+ * 4. `currentCoi.filedAt` -- kept as a non-null `string` (the real DTO's
+ *    `filed_at` is always present when `currentCoi` exists), but see the
+ *    comment on that field: it's approximated as `coi_documents.received_at`
+ *    server-side, not a real "the moment this was filed" timestamp -- there
+ *    is no separate `filed_at` column (ADR 0001).
  */
 
 // ---------------------------------------------------------------------------
@@ -71,6 +86,10 @@ export type EventType =
   | "note";
 
 export type EventSeverity = "info" | "warn" | "error";
+
+/** Coarser vocabulary used only by `LineComparisonDTO.severity` and
+ * `FlagDTO.severity` -- see the reconciliation note at the top of this file. */
+export type ComparisonSeverity = "info" | "error";
 
 export type DocStatus =
   | "received"
@@ -146,14 +165,14 @@ export interface LineComparisonDTO {
   required: RequirementLineDTO;
   parsed: ParsedLineDTO | null;
   pass: boolean;
-  severity: EventSeverity;
+  severity: ComparisonSeverity;
   note: string | null;
 }
 
 export interface FlagDTO {
   code: string;
   message: string;
-  severity: EventSeverity;
+  severity: ComparisonSeverity;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,13 +232,18 @@ export interface VendorStatusDTO {
   role: VendorRole;
   primaryEmail: string | null;
   status: "active" | "inactive";
-  primaryPropertyName: string;
-  primaryPropertyJurisdiction: string; // "City, ST"
+  /** Nullable: `vendors.primary_property_id` is nullable (real schema). */
+  primaryPropertyName: string | null;
+  /** Nullable, "City, ST" when present. */
+  primaryPropertyJurisdiction: string | null;
   complianceStatus: ComplianceStatus;
   currentCoi: {
     document: DocumentRef;
     validFrom: string;
     validTo: string;
+    /** Approximated as `coi_documents.received_at` -- there is no real
+     * `filed_at` column (ADR 0001); not the moment `file_document` flipped
+     * `is_current`. See backend/README.md's DTO shape notes. */
     filedAt: string;
   } | null;
   requirements: RequirementLineDTO[];
@@ -227,7 +251,10 @@ export interface VendorStatusDTO {
     runId: string;
     state: RunState;
     status: RunStatus;
-    dueDate: string;
+    /** Nullable: `runs.due_date` has no NOT NULL constraint -- a freshly
+     * onboarded vendor with no known current-COI expiry has `due_date=NULL`
+     * until a document is filed or a PM sets one. */
+    dueDate: string | null;
     nextActionAt: string | null;
     outreachEmailCount: number;
     maxOutreach: number;
@@ -265,7 +292,8 @@ export interface RunTraceDTO {
   state: RunState;
   status: RunStatus;
   trigger: "renewal_due" | "manual";
-  dueDate: string;
+  /** Nullable, same reason as `VendorStatusDTO.activeRun.dueDate` above. */
+  dueDate: string | null;
   startedAt: string;
   updatedAt: string;
   completedAt: string | null;

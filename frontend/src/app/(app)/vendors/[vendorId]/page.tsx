@@ -9,8 +9,10 @@ import { DocumentEvidenceChip } from "@/components/shared/evidence";
 import { RequirementsTable } from "@/components/vendors/requirements-table";
 import { CoiHistoryTable } from "@/components/vendors/coi-history-table";
 import { RunControls } from "@/components/vendors/run-controls";
-import { getVendorStatus } from "@/lib/mock/read-models";
+import { getVendorStatus } from "@/lib/api/read-models";
 import { formatDate, formatVendorRole, relativeTime } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorDetailPage({
   params,
@@ -25,7 +27,11 @@ export default async function VendorDetailPage({
     <>
       <PageHeader
         title={vendor.name}
-        description={`${formatVendorRole(vendor.role)} · ${vendor.primaryPropertyName}`}
+        description={
+          vendor.primaryPropertyName
+            ? `${formatVendorRole(vendor.role)} · ${vendor.primaryPropertyName}`
+            : formatVendorRole(vendor.role)
+        }
         actions={<ComplianceStatusBadge status={vendor.complianceStatus} className="text-sm" />}
       />
 
@@ -34,7 +40,11 @@ export default async function VendorDetailPage({
           {vendor.primaryEmail ? (
             <span className="inline-flex items-center gap-1.5"><Mail className="size-3.5" />{vendor.primaryEmail}</span>
           ) : null}
-          <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" />{vendor.primaryPropertyJurisdiction}</span>
+          {vendor.primaryPropertyJurisdiction ? (
+            <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" />{vendor.primaryPropertyJurisdiction}</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground/70"><MapPin className="size-3.5" />No property on file</span>
+          )}
         </div>
 
         {vendor.activeRun ? (

@@ -11,6 +11,7 @@
  */
 
 import type {
+  ComparisonSeverity,
   CoverageType,
   DocSource,
   DocStatus,
@@ -289,7 +290,7 @@ export interface VendorRecord {
   primaryEmail: string | null;
   vendorRole: VendorRole;
   status: "active" | "inactive";
-  primaryPropertyId: string;
+  primaryPropertyId: string | null;
   notes: string | null;
 }
 
@@ -562,7 +563,7 @@ export interface LineResult {
   parsedWaiverOfSubrogation: boolean | null;
   parsedPrimaryNoncontributory: boolean | null;
   pass: boolean;
-  severity: EventSeverity;
+  severity: ComparisonSeverity;
   note: string | null;
 }
 
@@ -573,7 +574,7 @@ export interface CoiValidationRecord {
   coiExtractionId: string;
   result: ValidationResult;
   lineResults: LineResult[];
-  flags: Array<{ code: string; message: string; severity: EventSeverity }>;
+  flags: Array<{ code: string; message: string; severity: ComparisonSeverity }>;
   faithfulnessOk: boolean;
   createdAt: string;
 }
@@ -856,7 +857,7 @@ export const coiValidations: CoiValidationRecord[] = [
       { vendorCoverageRequirementId: "vcr_ven_cleanpro_workers_comp", sourceComplianceRequirementId: "cr_ca_wc", coverageType: "workers_comp", parsedEachOccurrence: null, parsedAggregate: null, parsedAdditionalInsured: null, parsedWaiverOfSubrogation: null, parsedPrimaryNoncontributory: null, pass: false, severity: "error", note: "Workers' comp field confidence (0.41) fell below threshold on this scan -- treated as unread, not guessed." },
     ],
     flags: [
-      { code: "low_confidence_extraction", message: "Workers' comp figures could not be read reliably from the submitted scan (confidence 0.41, threshold 0.80). Requesting a clearer copy.", severity: "warn" },
+      { code: "low_confidence_extraction", message: "Workers' comp figures could not be read reliably from the submitted scan (confidence 0.41, threshold 0.80). Requesting a clearer copy.", severity: "error" },
     ],
     faithfulnessOk: true,
     createdAt: "2026-07-14T16:34:12Z",

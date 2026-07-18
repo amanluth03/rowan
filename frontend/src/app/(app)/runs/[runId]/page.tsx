@@ -12,8 +12,10 @@ import {
   getRunComparison,
   getRunDocument,
   getRunTrace,
-} from "@/lib/mock/read-models";
+} from "@/lib/api/read-models";
 import { formatDate, formatDateTime, formatVendorRole } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
 
 export default async function RunDetailPage({
   params,

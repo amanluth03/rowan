@@ -1,8 +1,10 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReviewItemCard } from "@/components/review/review-item-card";
-import { getReviewQueue } from "@/lib/mock/read-models";
+import { getReviewQueue } from "@/lib/api/read-models";
 import { Inbox } from "lucide-react";
+
+export const dynamic = "force-dynamic";
 
 export default async function ReviewQueuePage() {
   const items = await getReviewQueue();

@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { addVendorAction } from "@/app/actions";
-import type { PropertyOption } from "@/lib/mock/read-models";
+import type { PropertyOption } from "@/lib/api/read-models";
 import type { VendorRole } from "@/lib/types";
 import { formatVendorRole } from "@/lib/format";
 
@@ -45,7 +45,12 @@ export function AddVendorForm({
   const [notes, setNotes] = useState("");
   const [isPending, startTransition] = useTransition();
 
-  const canSubmit = name.trim().length > 0 && role !== "" && propertyId !== "";
+  // Property is optional (backend's AddVendorRequest.primary_property_id is
+  // `UUID | None`) -- not required for submission. # ASSUMPTION / GAP: there
+  // is currently no live property list to pick from at all (see
+  // `lib/api/read-models.ts::getPropertyOptions`'s docstring), so this can't
+  // be required without blocking onboarding entirely.
+  const canSubmit = name.trim().length > 0 && role !== "";
 
   return (
     <form
@@ -58,7 +63,7 @@ export function AddVendorForm({
             name: name.trim(),
             primaryEmail: email.trim(),
             vendorRole: role,
-            primaryPropertyId: propertyId,
+            primaryPropertyId: propertyId || null,
             notes: notes.trim() || undefined,
           });
           toast(result.message);
@@ -95,17 +100,23 @@ export function AddVendorForm({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="vendor-property">Primary property</Label>
-          <Select value={propertyId} onValueChange={setPropertyId}>
-            <SelectTrigger id="vendor-property" className="w-full">
-              <SelectValue placeholder="Select a property" />
-            </SelectTrigger>
-            <SelectContent>
-              {properties.map((p) => (
-                <SelectItem key={p.id} value={p.id}>{p.name} — {p.jurisdiction}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Label htmlFor="vendor-property">Primary property (optional)</Label>
+          {properties.length > 0 ? (
+            <Select value={propertyId} onValueChange={setPropertyId}>
+              <SelectTrigger id="vendor-property" className="w-full">
+                <SelectValue placeholder="Select a property" />
+              </SelectTrigger>
+              <SelectContent>
+                {properties.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.name} — {p.jurisdiction}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div id="vendor-property" className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+              No properties on file to pick from yet — Rowan will add this vendor without one. Coverage requirements can still be entered manually; jurisdiction auto-retrieval needs a property set another way first.
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">Resolves the jurisdiction Rowan uses to look up requirements.</p>
         </div>
       </div>

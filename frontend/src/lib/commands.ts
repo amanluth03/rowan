@@ -51,7 +51,18 @@ export interface AddVendorCommand {
   name: string;
   primaryEmail: string;
   vendorRole: VendorRole;
-  primaryPropertyId: string;
+  /**
+   * Nullable: the real backend's `AddVendorRequest.primary_property_id` is
+   * optional (`UUID | None`). # ASSUMPTION / gap: there is no `GET
+   * /api/v1/properties`-shaped read model in the current REST API (ADR 0003
+   * lists only 4 read DTOs, none a property list), so onboarding has no live
+   * way to populate a property picker -- flagged to backend/architect.
+   * Submitting without one is a real, backend-supported degradation, not a
+   * client-side hack: a vendor with `primary_property_id=null` just can't
+   * use requirements auto-retrieval (ADR 0005) until a PM sets one another
+   * way.
+   */
+  primaryPropertyId: string | null;
   notes?: string;
 }
 

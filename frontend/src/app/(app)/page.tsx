@@ -1,7 +1,11 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { PortfolioSnapshotStrip } from "@/components/activity/portfolio-snapshot";
 import { ActivityFeedItem } from "@/components/activity/activity-feed-item";
-import { getActivityFeed, getPortfolioSnapshot } from "@/lib/mock/read-models";
+import { getActivityFeed, getPortfolioSnapshot } from "@/lib/api/read-models";
+
+// Talks to a live backend on every request -- never attempt static
+// generation at build time (no guarantee the backend is reachable then).
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const [feed, snapshot] = await Promise.all([getActivityFeed(), getPortfolioSnapshot()]);
