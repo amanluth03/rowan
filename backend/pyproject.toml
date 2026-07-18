@@ -1,0 +1,33 @@
+[project]
+name = "rowan-backend"
+version = "0.1.0"
+description = "Rowan Vendor COI Renewal Agent — FastAPI backend (orchestration, tools, migrations, webhooks, scheduler)."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "asyncpg>=0.30",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "python-multipart>=0.0.12",
+    # Claude API — agent-engineer's ExtractionEngine / explanation-drafting
+    # implementations (app/tools/extraction_engine.py, draft_explanation.py).
+    "anthropic>=0.69",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.uv]
+package = false
