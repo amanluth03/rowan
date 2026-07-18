@@ -138,6 +138,10 @@ class ParseDocumentData(BaseModel):
     input_tokens: int
     output_tokens: int
     cost_cents: int
+    # See ExtractionEngineResult above — additive, defaults preserve prior
+    # behavior for callers/tests that don't populate them.
+    is_coi: bool = True
+    document_type: str | None = None
 
 
 async def parse_document(
@@ -239,6 +243,8 @@ async def parse_document(
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             cost_cents=result.cost_cents,
+            is_coi=result.is_coi,
+            document_type=result.document_type,
         )
 
         await idempotency.complete(

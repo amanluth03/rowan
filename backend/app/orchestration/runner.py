@@ -1,8 +1,10 @@
 """The orchestration runner (layer 2, ADR 0002). This IS the planner —
 there is no free-roaming agent loop. Every function here corresponds to one
 guarded transition (or a small cascade of tool-triggered transitions) from
-the state machine spec. The LLM is invoked only inside `parse_document` and
-(later) a drafting call in `run_validation` — never here; this module only
+the state machine spec. The LLM is invoked only inside `parse_document`
+(classify + extract sub-passes, `run_parsing`) and a best-effort coverage-gap
+explanation drafting call in `run_validation`
+(`_summarize_validation_failure`) — never here directly; this module only
 decides "given the current persisted state and a trigger, what allowlisted
 action, if any, fires next."
 
@@ -35,14 +37,37 @@ from app.policy.guardrails import PolicyDecision, check_action, check_budget, ch
 from app.retrieval import entity_repo, run_repo
 from app.retrieval.models import OrganizationRow, RunRow, VendorRow
 from app.tools.base import budget_snapshot
+from app.tools.draft_explanation import DraftExplanationInput, ExplanationEngine, draft_explanation
 from app.tools.escalate_to_pm import EscalateToPmInput, escalate_to_pm
 from app.tools.file_document import FileDocumentInput, file_document
 from app.tools.mark_task_complete import MarkTaskCompleteInput, mark_task_complete
 from app.tools.parse_document import ExtractionEngine, ParseDocumentInput, parse_document
 from app.tools.send_email import SendEmailInput, send_email
-from app.tools.update_coi_record import UpdateCoiRecordWriteInput, write_coi_record
+from app.tools.update_coi_record import UpdateCoiRecordWriteData, UpdateCoiRecordWriteInput, write_coi_record
 from app.policy.file_guardrails import check_attachment
 from app.storage import DocumentStorage, get_storage
+
+
+def _default_extraction_engine() -> ExtractionEngine:
+    # Lazy import: constructing ClaudeExtractionEngine touches settings/the
+    # anthropic SDK, which tests that inject their own FakeEngine should
+    # never need to pay for or configure. See app/tools/extraction_engine.py.
+    from app.tools.extraction_engine import ClaudeExtractionEngine
+
+    return ClaudeExtractionEngine()
+
+
+def _default_explanation_engine() -> ExplanationEngine | None:
+    """Best-effort: explanation drafting is descriptive-only (ADR 0004), so a
+    misconfigured/absent Claude credential must never block escalation —
+    callers treat a None engine (or any drafting failure) as "use the
+    deterministic fallback summary", not as an error."""
+    try:
+        from app.tools.explanation_engine import ClaudeExplanationEngine
+
+        return ClaudeExplanationEngine()
+    except Exception:  # noqa: BLE001 — e.g. ExplanationEngineError: no API key configured
+        return None
 
 FROM_ADDRESS_DEFAULT = "rowan@example.com"
 
@@ -295,6 +320,42 @@ async def _escalate(
     return await _transition(ctx, to_state=RunState.escalated_to_pm, guard_name=reason_code)
 
 
+async def _needs_human_review(
+    ctx: RunContext, *, reason_code: str, severity: str, summary: str, details: dict[str, Any]
+) -> RunRow | None:
+    """Companion to `_escalate` (kind='escalated_to_pm') for the OTHER
+    escalation kind, ADR 0002's `needs_human_review` state: "Allowlist:
+    create/update escalation(kind=needs_human_review), notify, wait." Prior
+    to this, `run_parsing`/`run_validation` transitioned straight to
+    `needs_human_review` without ever creating the `escalations` row the
+    human-review queue (CLAUDE.md key screen 4) and
+    `resolve_needs_human_review` both depend on — a real gap, not a stylistic
+    choice (qa-evals-engineer's golden-document fixtures all expect
+    `escalate_to_pm` in `expected_tool_calls` for every needs_human_review
+    trajectory; see tests/evals/fixtures/golden_manifest.py). `summary` may
+    be LLM-drafted prose (ADR 0004) — it is attached here as data only and
+    never influences the routing decision the caller already made before
+    calling this.
+    """
+    async with org_scoped_tx(ctx.org.id) as conn:
+        await escalate_to_pm(
+            conn,
+            _tool_context(ctx, Action.escalate_to_pm),
+            EscalateToPmInput(
+                vendor_id=ctx.vendor.id,
+                kind="needs_human_review",
+                reason_code=reason_code,
+                severity=severity,
+                summary=summary,
+                details=details,
+                run_state=ctx.run.state.value,
+                vendor_name=ctx.vendor.name,
+                from_email=FROM_ADDRESS_DEFAULT,
+            ),
+        )
+    return await _transition(ctx, to_state=RunState.needs_human_review, guard_name=reason_code)
+
+
 # --------------------------------------------------------------------------
 # awaiting_vendor_response: follow-up self-loop / deadline escalation
 #   (CLAUDE.md's canonical example — allowlist is EXACTLY wait /
@@ -536,6 +597,20 @@ async def run_parsing(
     attempt_no: int = 0,
     storage: DocumentStorage | None = None,
 ) -> RunRow | None:
+    """Two-pass per ADR 0004's 2026-07-18 amendment: a cheap `classify`
+    sub-call runs first (is this actually a COI at all?); only if it clears
+    threshold does the accuracy-critical `extract` sub-call run. Both are
+    separate calls to the `parse_document` TOOL (each its own idempotency
+    key + its own `llm_call_count` increment, per ADR 0004: "prompt_id
+    distinguishes the classify sub-call from the extract sub-call, so each
+    has its own idempotent replay slot") — not two calls bundled inside one
+    tool invocation. `engine` defaults to the real `ClaudeExtractionEngine`
+    (lazy-imported, see `_default_extraction_engine` above) so production
+    callers don't have to remember to wire it; tests inject their own
+    FakeEngine/test double exactly as before.
+    """
+    engine = engine or _default_extraction_engine()
+
     ctx = await _load_context(run_id, organization_id)
     if ctx is None or ctx.run.state != RunState.parsing:
         return None
@@ -547,8 +622,15 @@ async def run_parsing(
     decision = await _guard(ctx, Action.parse_document)
     if not decision.allow:
         if decision.guardrail_name in ("llm_budget_exhausted", "cost_budget_exhausted"):
-            return await _transition(
-                ctx, to_state=RunState.needs_human_review, guard_name="extraction_budget_exhausted"
+            return await _needs_human_review(
+                ctx,
+                reason_code="extraction_budget_exhausted",
+                severity="warn",
+                summary=(
+                    f"Rowan could not finish reading {ctx.vendor.name}'s certificate within the "
+                    f"per-document processing budget. Please review the document manually."
+                ),
+                details={"guardrail": decision.guardrail_name},
             )
         await _record_guardrail_trip(ctx, decision, Action.parse_document)
         return None
@@ -556,13 +638,76 @@ async def run_parsing(
     async with org_scoped_tx(ctx.org.id) as conn:
         doc = await entity_repo.get_coi_document(conn, ctx.run.coi_document_id)
 
+    # --- sub-pass 1: classify -------------------------------------------
+    classify_result = await parse_document(
+        _tool_context(ctx, Action.parse_document),
+        ParseDocumentInput(
+            coi_document_id=doc.id,
+            storage_path=doc.storage_path,
+            content_type=doc.content_type,
+            prompt_id="classify",
+            attempt_no=attempt_no,
+            confidence_threshold=ctx.constants.confidence_threshold,
+        ),
+        engine=engine,
+        storage=storage,
+    )
+    if classify_result.status != "ok":
+        # Stay in `parsing`; a later re-invocation (bumped attempt_no) is a
+        # fresh idempotency key, or the budget guard above eventually routes
+        # to needs_human_review once MAX_LLM_PER_DOC is exhausted.
+        return None
+
+    ctx2 = await _load_context(run_id, organization_id)
+    if ctx2 is None or ctx2.run.state != RunState.parsing:
+        return None
+    ctx = ctx2
+
+    classify_confidence = classify_result.data.overall_confidence
+    if not classify_result.data.is_coi or classify_confidence < ctx.constants.confidence_threshold:
+        return await _needs_human_review(
+            ctx,
+            reason_code="unclassifiable_document",
+            severity="warn",
+            summary=(
+                f"The document received for {ctx.vendor.name} does not appear to be a "
+                f"certificate of insurance"
+                + (f" (looked like: {classify_result.data.document_type})" if classify_result.data.document_type else "")
+                + ". Please review it manually."
+            ),
+            details={
+                "document_type": classify_result.data.document_type,
+                "classify_confidence": classify_confidence,
+            },
+        )
+
+    # Re-check budget before the second sub-call: classify just consumed
+    # one of the MAX_LLM_PER_DOC slots.
+    decision = await _guard(ctx, Action.parse_document)
+    if not decision.allow:
+        if decision.guardrail_name in ("llm_budget_exhausted", "cost_budget_exhausted"):
+            return await _needs_human_review(
+                ctx,
+                reason_code="extraction_budget_exhausted",
+                severity="warn",
+                summary=(
+                    f"Rowan classified {ctx.vendor.name}'s document as a certificate of insurance "
+                    f"but ran out of processing budget before extracting coverage details. Please "
+                    f"review the document manually."
+                ),
+                details={"guardrail": decision.guardrail_name},
+            )
+        await _record_guardrail_trip(ctx, decision, Action.parse_document)
+        return None
+
+    # --- sub-pass 2: extract ---------------------------------------------
     parse_result = await parse_document(
         _tool_context(ctx, Action.parse_document),
         ParseDocumentInput(
             coi_document_id=doc.id,
             storage_path=doc.storage_path,
             content_type=doc.content_type,
-            prompt_id="coi_extraction_v1",
+            prompt_id="extract",
             attempt_no=attempt_no,
             confidence_threshold=ctx.constants.confidence_threshold,
         ),
@@ -587,8 +732,16 @@ async def run_parsing(
 
     overall_confidence = parse_result.data.overall_confidence
     if overall_confidence < ctx.constants.confidence_threshold:
-        return await _transition(
-            ctx, to_state=RunState.needs_human_review, guard_name="low_confidence_extraction"
+        return await _needs_human_review(
+            ctx,
+            reason_code="low_confidence_extraction",
+            severity="warn",
+            summary=(
+                f"Rowan read {ctx.vendor.name}'s certificate but was not confident enough in the "
+                f"extracted coverage details (confidence {overall_confidence:.2f}) to validate it "
+                f"automatically. Please review the document manually."
+            ),
+            details={"overall_confidence": overall_confidence},
         )
 
     return await _transition(ctx, to_state=RunState.validating, guard_name="schema_valid_and_confident")
@@ -654,7 +807,57 @@ async def run_validation(organization_id: UUID, run_id: UUID) -> RunRow | None:
             guard_name="validation_passed_and_faithful",
         )
 
-    return await _transition(ctx, to_state=RunState.needs_human_review, guard_name="validation_failed_or_flagged")
+    summary = await _summarize_validation_failure(ctx, data=data)
+    return await _needs_human_review(
+        ctx,
+        reason_code="validation_failed",
+        severity="warn",
+        summary=summary,
+        details={"validation_id": str(data.validation_id), "flags": data.flags, "line_results": data.line_results},
+    )
+
+
+async def _summarize_validation_failure(ctx: RunContext, *, data: UpdateCoiRecordWriteData) -> str:
+    """Best-effort coverage-gap explanation (CLAUDE.md canonical pipeline
+    step; ADR 0002/0004: "descriptive only... never gates the escalation").
+    Attempts a `draft_explanation` LLM call gated by the SAME per-document
+    LLM budget parse_document shares (Action.draft_explanation is in
+    app/policy/guardrails.py's LLM_ACTIONS) — on ANY failure (budget denied,
+    no engine configured, provider error), falls back to a deterministic,
+    still-informative summary built straight from the flags. Routing to
+    needs_human_review already happened in the caller before this runs; this
+    function can only ever change the TEXT attached to that escalation.
+    """
+    deterministic_fallback = (
+        f"{ctx.vendor.name}'s certificate did not pass automated coverage validation "
+        f"(faithfulness_ok={data.faithfulness_ok}). Flags: "
+        f"{', '.join(f.get('code', '?') for f in data.flags) or 'none'}. Please review the "
+        f"parsed values against the requirements."
+    )
+
+    decision = await _guard(ctx, Action.draft_explanation)
+    if not decision.allow:
+        return deterministic_fallback
+
+    engine = _default_explanation_engine()
+    if engine is None:
+        return deterministic_fallback
+
+    result = await draft_explanation(
+        _tool_context(ctx, Action.draft_explanation),
+        DraftExplanationInput(
+            coi_validation_id=data.validation_id,
+            vendor_name=ctx.vendor.name,
+            result=data.result,
+            line_results=data.line_results,
+            flags=data.flags,
+            faithfulness_ok=data.faithfulness_ok,
+        ),
+        engine=engine,
+    )
+    if result.status != "ok" or result.data is None:
+        return deterministic_fallback
+    return result.data.explanation_text
 
 
 # --------------------------------------------------------------------------
