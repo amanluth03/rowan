@@ -1,0 +1,13 @@
+# Product context addendum
+
+*From market research — informs build priorities and tradeoffs, not scope. Read after `CLAUDE.md`, before making implementation tradeoffs.*
+
+1. **Competitive bar for the COI loop.** The "expiry reminder" layer is a commodity (~$49–499/mo, many horizontal entrants: Expiration Reminder, ExpiryEdge, Remindax, etc.). Some tools already do automated vendor emails at 60/30/14 days with upload links, OCR extraction, and mismatch flagging. Rowan's build must therefore excel specifically at what the commodity layer cannot do: (a) closing the loop end-to-end — receive → validate against requirements → file → escalate only on exceptions, with zero PM involvement on the happy path; and (b) requirements intelligence — knowing what should exist for a property/vendor, not just tracking dates a user entered. When making implementation tradeoffs, always favor autonomy-of-the-happy-path and requirements-awareness over dashboard/reminder polish. A reminder feature that requires PM action is table stakes, not the product.
+
+2. **The demo standard.** The end-to-end demo must NOT resemble "a tracker with reminders." Success looks like: an activity feed showing completed work ("Renewed COI for Hernandez Plumbing — validated $2M GL — filed") with the PM having touched nothing. Build and polish in that priority order.
+
+3. **Selling emphasis → UI emphasis.** The buyer motivation is liability and owner-trust, not time-savings. This elevates two existing scope items from nice-to-have to critical path: the audit-ready export (per-vendor and per-portfolio compliance report a PM can hand an owner or insurer) and the evidence trail (every status claim in the UI links to the document and parsed values behind it). Treat both as first-class deliverables, not appendices.
+
+4. **Architecture forward-compatibility (no scope change now).** A near-term second workflow is planned: tenant renters-insurance verification — the identical chase → receive → parse → validate → file loop, pointed at tenants instead of vendors, at higher volume. Do NOT build it in v1. DO keep the agent chassis (state machine, tool contracts, extraction pipeline, validation engine) generic enough that "counterparty = vendor" is a parameter, not a hardcoded assumption — e.g., avoid baking "vendor" into table names and interfaces where "insured_party" or similar is the honest abstraction. If this generalization ever conflicts with shipping speed, shipping speed wins; note the debt in an ADR instead.
+
+5. **What has NOT changed.** Scope, non-goals, guardrails, the pillar requirements, and the working process from the main prompt all stand exactly as written. This addendum adjusts emphasis and tradeoff priorities only.

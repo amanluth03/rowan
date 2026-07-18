@@ -12,6 +12,10 @@ Rowan is the AI back office for residential property managers. We're starting wi
 
 **What Rowan does differently:** Rowan is an agent, not a tracker. The first shipped capability is the Vendor COI Renewal Agent: when a vendor's certificate of insurance is approaching expiry, Rowan emails the vendor, receives the renewed certificate, reads it, validates the coverage against Dana's requirements, files it as evidence, and tells Dana it's handled — or escalates with specifics when something's wrong. Dana's experience: "I added my vendors and stopped thinking about COIs."
 
+## Product context addendum
+
+Read `docs/context/product-context.md` after this file, before making implementation tradeoffs. It's market-research-derived guidance on build priorities and emphasis (autonomy of the happy path over dashboard polish, the audit-ready export and evidence trail as critical-path deliverables, keeping the agent chassis parameterizable by counterparty type for a planned future workflow) — it does not change scope, non-goals, guardrails, or anything else in this file.
+
 ## This build
 
 There is no prior codebase for this product — v0 (vendor management, renewal state machine, email outreach loop, document parsing, validation, PM views) and v1 (the production pillars below) are being designed and built together, from scratch, in this repo. Do not look for or reference any other repo for patterns or prior art.
