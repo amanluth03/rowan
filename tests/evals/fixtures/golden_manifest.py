@@ -442,16 +442,31 @@ _add(GoldenDocumentFixture(
     extraction_expected_to_succeed=False,
     expected_extraction=None,
     expected_trajectory=ExpectedTrajectory(
-        expected_state_sequence=[RunState.DOCUMENT_RECEIVED, RunState.NEEDS_HUMAN_REVIEW],
+        expected_state_sequence=[RunState.DOCUMENT_RECEIVED, RunState.PARSING, RunState.NEEDS_HUMAN_REVIEW],
         expected_final_state=RunState.NEEDS_HUMAN_REVIEW,
-        forbidden_states=[RunState.PARSING, RunState.VALIDATING, RunState.FILED],
+        forbidden_states=[RunState.VALIDATING, RunState.FILED],
         expected_guardrail_trips=[ReasonCode.UNCLASSIFIABLE_DOCUMENT],
-        expected_tool_calls=["escalate_to_pm"],
-        forbidden_tool_calls=["parse_document", "file_document", "mark_task_complete"],
+        expected_tool_calls=["parse_document", "escalate_to_pm"],
+        forbidden_tool_calls=["file_document", "mark_task_complete"],
         expected_escalation=EscalationRecord(kind="needs_human_review", reason_code=ReasonCode.UNCLASSIFIABLE_DOCUMENT),
     ),
-    notes="Tests the document_received classifier gate, not the extraction pipeline — "
-          "`forbidden_states` includes PARSING itself, not just FILED.",
+    notes="UPDATED 2026-07-18 (integration pass): originally written when classification was "
+          "imagined as a `document_received`-boundary gate, so this fixture forbade PARSING "
+          "entirely. Per ADR 0002's 2026-07-18 amendment ('No new classify_document tool; "
+          "classification folded into parsing'), `document_received -> parsing` is now "
+          "unconditional once storage/file-guardrail checks pass, and the actual 'is this a "
+          "COI' judgment happens as parsing's first LLM sub-pass (prompt_id='classify'). This "
+          "document — pure OCR noise — now legitimately REACHES `parsing` and is caught there: "
+          "the classify sub-pass returns is_coi=False, which routes parsing -> "
+          "needs_human_review with the same UNCLASSIFIABLE_DOCUMENT reason this fixture always "
+          "expected, just one state later than originally modeled (before real orchestration "
+          "existed to test against). `parse_document` moved from forbidden to expected (the "
+          "classify sub-call IS a parse_document invocation); PARSING dropped from "
+          "forbidden_states. Distinguishes from garbage_02 by WHICH sub-pass rejects the "
+          "document: this fixture's classify sub-pass says not-a-COI outright (single "
+          "parse_document call before needs_human_review); garbage_02's classify sub-pass "
+          "passes (it's COI-shaped) but its extract sub-pass is sub-threshold confidence (two "
+          "parse_document calls).",
 ))
 
 _add(GoldenDocumentFixture(

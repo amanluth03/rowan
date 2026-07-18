@@ -1,19 +1,27 @@
 """
 The seam between this eval harness and the real orchestration pipeline.
 
-Nothing in `backend/` or `agent/` exists yet (this harness is being built
-contract-first per the tech lead's instructions). Rather than guess at
-backend's internal module layout, the harness defines ONE well-known
-entrypoint it will call, resolved dynamically so it degrades to a clean
-`pytest.skip` (not a collection error) until that entrypoint exists.
+RESOLVED (integration pass, 2026-07-18): backend's real orchestration landed
+at `backend/app/orchestration/runner.py` — a set of free functions
+(`run_parsing`, `run_validation`, `handle_inbound_document`,
+`complete_filing`, ...) operating over asyncpg + a live Postgres, not the
+originally-guessed `backend.orchestration.pipeline:run_document_pipeline`
+module/shape. Rather than force backend's DI pattern into the
+`PipelineDependencies` bag-of-deps this file originally proposed (which
+guessed at an injectable LLM client / email client / clock that don't
+actually exist as seams in the real build — see `harness/real_pipeline.py`'s
+module docstring for the specifics), the default entrypoint now points at a
+thin real implementation in THIS package
+(`tests.evals.harness.real_pipeline:run_document_pipeline`) that drives the
+real runner functions directly, the same way backend-engineer's own
+white-box tests do
+(`backend/tests/test_orchestration_document_pipeline.py`). No eval fixture
+or assertion code needed to change — only this one resolution point, exactly
+as designed.
 
-# ASSUMPTION: the default entrypoint path `backend.orchestration.pipeline:
-# run_document_pipeline` is a proposal, not something backend-engineer has
-# committed to. Whoever lands the real pipeline should either (a) expose a
-# callable at that path matching the `PipelineUnderTest` signature below, or
-# (b) set the ROWAN_PIPELINE_ENTRYPOINT env var (or pytest.ini) to point at
-# wherever it actually lives. Either way, no eval fixture or assertion code
-# needs to change — only this one resolution point.
+# ASSUMPTION: `ROWAN_PIPELINE_ENTRYPOINT` remains the override seam (e.g. to
+# point at a future, more fully-DI'd pipeline entrypoint without touching
+# this file again).
 """
 from __future__ import annotations
 
@@ -24,7 +32,7 @@ from typing import Any, Protocol
 from tests.evals.contracts.state_machine import RunTrajectory
 
 ENV_VAR = "ROWAN_PIPELINE_ENTRYPOINT"
-DEFAULT_ENTRYPOINT = "backend.orchestration.pipeline:run_document_pipeline"
+DEFAULT_ENTRYPOINT = "tests.evals.harness.real_pipeline:run_document_pipeline"
 
 
 class PipelineNotAvailable(Exception):
