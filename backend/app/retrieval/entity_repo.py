@@ -20,6 +20,7 @@ from uuid import UUID
 import asyncpg
 
 from app.retrieval.models import (
+    AgentEventRow,
     CoiDocumentRow,
     CoiExtractionRow,
     CoiValidationRow,
@@ -27,6 +28,7 @@ from app.retrieval.models import (
     EmailMessageRow,
     EscalationRow,
     OrganizationRow,
+    PropertyRow,
     VendorCoverageRequirementRow,
     VendorRow,
 )
@@ -69,6 +71,34 @@ async def get_vendor(conn: asyncpg.Connection, vendor_id: UUID) -> VendorRow | N
         vendor_id,
     )
     return VendorRow(**dict(row)) if row else None
+
+
+async def get_property(conn: asyncpg.Connection, property_id: UUID) -> "PropertyRow | None":
+    row = await conn.fetchrow(
+        """
+        select id, organization_id, name, line1, city, state, county, postal_code, country,
+               hoa_name, property_type, attributes
+        from properties where id = $1
+        """,
+        property_id,
+    )
+    if row is None:
+        return None
+    return PropertyRow(**_with_json(row, "attributes"))
+
+
+async def list_vendors(conn: asyncpg.Connection) -> list[VendorRow]:
+    """Every vendor in the caller's org (RLS-scoped by the enclosing
+    org_scoped_tx — no explicit organization_id filter needed, matching this
+    module's existing convention, e.g. get_vendor/list_coi_document_history)."""
+    rows = await conn.fetch(
+        """
+        select id, organization_id, name, primary_email, vendor_role, status,
+               primary_property_id, notes
+        from vendors order by name
+        """
+    )
+    return [VendorRow(**dict(r)) for r in rows]
 
 
 async def get_vendor_coverage_requirements(
@@ -264,6 +294,52 @@ async def get_escalation(conn: asyncpg.Connection, escalation_id: UUID) -> Escal
     return EscalationRow(**d)
 
 
+async def list_open_escalations(
+    conn: asyncpg.Connection, *, kind: str | None = None
+) -> list[EscalationRow]:
+    """The human-review-queue / PM-escalations-queue read path.
+
+    Deliberately filters ONLY on `status = 'open'` (+ optional `kind`) —
+    NOT on the owning run's current state. security-reviewer flagged
+    (non-blocking, prior review) that `escalations` are created keyed on the
+    run_state AT CREATION TIME (see `get_open_escalation` above, used only
+    for escalate_to_pm's own dedupe), while an open escalation must still be
+    resolvable even after the run has since moved on (e.g. a crash-recovery
+    path advanced the run past `needs_human_review` in some edge case, or a
+    second reason code parked the run in a different state before this one
+    was resolved). Joining against `runs.state` here would silently hide
+    exactly the escalations most in need of PM attention. See
+    tests/test_api_reads.py::test_review_queue_finds_escalation_even_if_run_state_has_moved_on.
+    """
+    if kind is not None:
+        rows = await conn.fetch(
+            """
+            select id, organization_id, run_id, vendor_id, kind, reason_code, severity, summary,
+                   details, status, resolution, created_at, resolved_at
+            from escalations
+            where status = 'open' and kind = $1
+            order by created_at desc
+            """,
+            kind,
+        )
+    else:
+        rows = await conn.fetch(
+            """
+            select id, organization_id, run_id, vendor_id, kind, reason_code, severity, summary,
+                   details, status, resolution, created_at, resolved_at
+            from escalations
+            where status = 'open'
+            order by created_at desc
+            """
+        )
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["details"] = _loads(d["details"])
+        out.append(EscalationRow(**d))
+    return out
+
+
 async def get_latest_approved_escalation(conn: asyncpg.Connection, run_id: UUID) -> EscalationRow | None:
     row = await conn.fetchrow(
         """
@@ -286,6 +362,78 @@ async def get_latest_approved_escalation(conn: asyncpg.Connection, run_id: UUID)
 # Writes (invoked only from the tools layer, after policy + idempotency
 # checks have already passed — see app/tools/*.py)
 # --------------------------------------------------------------------------
+
+
+async def insert_vendor(
+    conn: asyncpg.Connection,
+    *,
+    id: UUID,
+    organization_id: UUID,
+    name: str,
+    primary_email: str | None,
+    vendor_role: str,
+    primary_property_id: UUID | None,
+    notes: str | None,
+) -> VendorRow:
+    row = await conn.fetchrow(
+        """
+        insert into vendors (
+            id, organization_id, name, primary_email, vendor_role, status,
+            primary_property_id, notes
+        ) values ($1,$2,$3,$4,$5,'active',$6,$7)
+        returning id, organization_id, name, primary_email, vendor_role, status,
+                  primary_property_id, notes
+        """,
+        id, organization_id, name, primary_email, vendor_role, primary_property_id, notes,
+    )
+    return VendorRow(**dict(row))
+
+
+async def upsert_vendor_coverage_requirement(
+    conn: asyncpg.Connection,
+    *,
+    id: UUID,
+    organization_id: UUID,
+    vendor_id: UUID,
+    coverage_type: str,
+    min_each_occurrence: int | None,
+    min_aggregate: int | None,
+    requires_additional_insured: bool,
+    requires_waiver_of_subrogation: bool,
+    requires_primary_noncontributory: bool,
+    source_compliance_requirement_id: UUID | None,
+    confirmed_by_pm: bool,
+) -> VendorCoverageRequirementRow:
+    """Materializes one coverage-type line into the vendor's ONE effective
+    requirement set (ADR 0001 locked one-set-per-vendor decision). Idempotent
+    by construction via the `unique(vendor_id, coverage_type)` constraint —
+    re-running SetRequirements for the same vendor/coverage_type updates the
+    existing line rather than duplicating it."""
+    row = await conn.fetchrow(
+        """
+        insert into vendor_coverage_requirements (
+            id, organization_id, vendor_id, coverage_type, min_each_occurrence, min_aggregate,
+            requires_additional_insured, requires_waiver_of_subrogation, requires_primary_noncontributory,
+            source_compliance_requirement_id, confirmed_by_pm
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        on conflict (vendor_id, coverage_type) do update set
+            min_each_occurrence = excluded.min_each_occurrence,
+            min_aggregate = excluded.min_aggregate,
+            requires_additional_insured = excluded.requires_additional_insured,
+            requires_waiver_of_subrogation = excluded.requires_waiver_of_subrogation,
+            requires_primary_noncontributory = excluded.requires_primary_noncontributory,
+            source_compliance_requirement_id = excluded.source_compliance_requirement_id,
+            confirmed_by_pm = excluded.confirmed_by_pm,
+            updated_at = now()
+        returning id, organization_id, vendor_id, coverage_type, min_each_occurrence, min_aggregate,
+                  requires_additional_insured, requires_waiver_of_subrogation,
+                  requires_primary_noncontributory, source_compliance_requirement_id, confirmed_by_pm
+        """,
+        id, organization_id, vendor_id, coverage_type, min_each_occurrence, min_aggregate,
+        requires_additional_insured, requires_waiver_of_subrogation, requires_primary_noncontributory,
+        source_compliance_requirement_id, confirmed_by_pm,
+    )
+    return VendorCoverageRequirementRow(**dict(row))
 
 
 async def insert_coi_document(
@@ -545,6 +693,35 @@ async def insert_email_message(
         reply_token, subject, body_snapshot, to_email, from_email, status, attachments_count,
     )
     return EmailMessageRow(**dict(row))
+
+
+_AGENT_EVENT_COLUMNS = """
+    id, organization_id, run_id, vendor_id, event_type, name, severity, from_state, to_state,
+    tool_name, idempotency_key, llm_model, prompt_hash, input_tokens, output_tokens, cost_cents,
+    latency_ms, payload, created_at
+"""
+
+
+async def list_agent_events_for_run(
+    conn: asyncpg.Connection, run_id: UUID, *, limit: int = 500
+) -> list[AgentEventRow]:
+    rows = await conn.fetch(
+        f"select {_AGENT_EVENT_COLUMNS} from agent_events where run_id = $1 order by created_at asc limit $2",
+        run_id, limit,
+    )
+    return [AgentEventRow(**_with_json(r, "payload")) for r in rows]
+
+
+async def list_recent_agent_events_for_org(
+    conn: asyncpg.Connection, *, limit: int = 100
+) -> list[AgentEventRow]:
+    """Activity-feed source (ADR 0003 `ActivityFeedItemDTO`). RLS-scoped by
+    the enclosing org_scoped_tx; no explicit organization_id filter needed."""
+    rows = await conn.fetch(
+        f"select {_AGENT_EVENT_COLUMNS} from agent_events order by created_at desc limit $1",
+        limit,
+    )
+    return [AgentEventRow(**_with_json(r, "payload")) for r in rows]
 
 
 async def find_email_by_provider_message_id(

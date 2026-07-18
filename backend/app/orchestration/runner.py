@@ -21,10 +21,13 @@ mechanism this all rests on.
 from __future__ import annotations
 
 import hashlib
+import secrets
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
+
+import asyncpg
 
 from app.db import org_scoped_tx
 from app.ids import uuid7
@@ -35,17 +38,47 @@ from app.orchestration.constants import RunConstants, resolve_constants
 from app.policy.actions import Action
 from app.policy.guardrails import PolicyDecision, check_action, check_budget, check_kill_switches
 from app.retrieval import entity_repo, run_repo
-from app.retrieval.models import OrganizationRow, RunRow, VendorRow
+from app.retrieval.models import EscalationRow, OrganizationRow, RunRow, VendorCoverageRequirementRow, VendorRow
+from app.retrieval.requirements_retriever import RequirementsQuery, V1DeterministicRetriever
 from app.tools.base import budget_snapshot
+from app.models.coi_fields import ExtractedCoiFields
 from app.tools.draft_explanation import DraftExplanationInput, ExplanationEngine, draft_explanation
 from app.tools.escalate_to_pm import EscalateToPmInput, escalate_to_pm
 from app.tools.file_document import FileDocumentInput, file_document
 from app.tools.mark_task_complete import MarkTaskCompleteInput, mark_task_complete
-from app.tools.parse_document import ExtractionEngine, ParseDocumentInput, parse_document
+from app.tools.parse_document import ExtractionEngine, ExtractionEngineError, ParseDocumentInput, parse_document
 from app.tools.send_email import SendEmailInput, send_email
 from app.tools.update_coi_record import UpdateCoiRecordWriteData, UpdateCoiRecordWriteInput, write_coi_record
 from app.policy.file_guardrails import check_attachment
 from app.storage import DocumentStorage, get_storage
+
+
+class NoRequirementsOnFileError(Exception):
+    """Raised by `set_requirements` when auto-retrieval finds nothing (ADR
+    0005 fallback: "the agent NEVER guesses or proceeds on defaults"). The
+    API layer (app/api/commands.py) catches this and surfaces the exact
+    query that missed to the PM, per ADR 0005's fallback contract — this is
+    the onboarding-time analogue of `validating -> escalated_to_pm`'s
+    `no_requirements_on_file` guard; there is no run/escalation to attach it
+    to yet at onboarding time, so it surfaces as a command error instead."""
+
+    def __init__(self, message: str, *, query: RequirementsQuery) -> None:
+        super().__init__(message)
+        self.query = query
+
+
+# # ASSUMPTION: neither ADR 0001 nor ADR 0004 specifies a reply_token
+# lifetime. A `runs` row is long-lived (it cycles monitoring -> ... -> filed
+# -> monitoring indefinitely for the SAME run/reply_token, per
+# `complete_filing`'s cycle reset — see that function above), so the token
+# must remain valid across many renewal cycles, not just one outreach
+# attempt. Picking 2 years as a placeholder "effectively the vendor
+# relationship's lifetime" default, pending real Dana input on rotation
+# policy; CLAUDE.md's "short-lived tokens where supported" principle is
+# honored elsewhere (webhook signature timestamps, internal bearer token)
+# but doesn't cleanly apply to a token whose entire job is to survive
+# exactly as long as the vendor relationship does. Flagged to architect.
+REPLY_TOKEN_VALIDITY_DAYS = 730
 
 
 def _default_extraction_engine() -> ExtractionEngine:
@@ -140,6 +173,65 @@ async def _record_guardrail_trip(ctx: RunContext, decision: PolicyDecision, acti
             severity=EventSeverity.warn,
             payload={"reason": decision.reason, "guardrail": decision.guardrail_name},
         )
+
+
+async def _persist_events(
+    ctx: RunContext, events: list[Any], *, conn: asyncpg.Connection | None = None
+) -> None:
+    """Persists every `PendingEvent` a tool call returned (ADR 0004: "tools
+    never write agent_events directly — they return these, and the caller
+    ... persists them in the same transaction as the tool's own side
+    effect, so an event is never recorded for a side effect that didn't
+    commit").
+
+    Finding #2 fix (qa-evals-engineer / coordinator, 2026-07-18): this
+    helper did not exist before — nothing in this module ever called
+    `.events` off an awaited tool result, so `agent_events` never received
+    `tool_call`/`llm_call` rows at all (only the runner's OWN direct
+    `write_event` calls for state_transition/guardrail_trip/error/
+    human_intervention landed). Every call site below now captures and
+    persists `.events`.
+
+    Pass `conn` when the caller already holds the SAME transaction the
+    tool's own write happened in (the DB-only tools: `write_coi_record`,
+    `file_document`, `mark_task_complete`, `escalate_to_pm`'s own write) —
+    this keeps the event atomically consistent with the effect it
+    describes. Omit it for tools that manage their own connection(s)
+    internally (`send_email`, `parse_document`, `draft_explanation`), which
+    have already committed by the time their `ToolOutput` is returned to us
+    — those events are persisted in a separate, immediately-following
+    transaction (best-effort, same acknowledged small gap as those tools'
+    own crash-safety docstrings already describe).
+    """
+    if not events:
+        return
+
+    async def _write_all(c: asyncpg.Connection) -> None:
+        for e in events:
+            await write_event(
+                c,
+                organization_id=ctx.org.id,
+                run_id=ctx.run.id,
+                vendor_id=ctx.vendor.id,
+                event_type=e.event_type,
+                name=e.name,
+                severity=e.severity,
+                tool_name=e.tool_name,
+                idempotency_key=e.idempotency_key,
+                llm_model=e.llm_model,
+                prompt_hash=e.prompt_hash,
+                input_tokens=e.input_tokens,
+                output_tokens=e.output_tokens,
+                cost_cents=e.cost_cents,
+                latency_ms=e.latency_ms,
+                payload=e.payload,
+            )
+
+    if conn is not None:
+        await _write_all(conn)
+        return
+    async with org_scoped_tx(ctx.org.id) as new_conn:
+        await _write_all(new_conn)
 
 
 async def _transition(
@@ -275,6 +367,7 @@ async def send_first_outreach(organization_id: UUID, run_id: UUID, *, now: datet
             sequence=ctx.run.outreach_email_count,
         ),
     )
+    await _persist_events(ctx, send_result.events)
     if send_result.status != "ok":
         # Transient provider failure: leave the run in renewal_due_soon: the
         # next scheduler tick retries (send_email is idempotent, so this is
@@ -302,7 +395,7 @@ async def _escalate(
     ctx: RunContext, *, reason_code: str, severity: str, summary: str, details: dict[str, Any]
 ) -> RunRow | None:
     async with org_scoped_tx(ctx.org.id) as conn:
-        await escalate_to_pm(
+        escalate_result = await escalate_to_pm(
             conn,
             _tool_context(ctx, Action.escalate_to_pm),
             EscalateToPmInput(
@@ -317,6 +410,7 @@ async def _escalate(
                 from_email=FROM_ADDRESS_DEFAULT,
             ),
         )
+        await _persist_events(ctx, escalate_result.events, conn=conn)
     return await _transition(ctx, to_state=RunState.escalated_to_pm, guard_name=reason_code)
 
 
@@ -338,7 +432,7 @@ async def _needs_human_review(
     calling this.
     """
     async with org_scoped_tx(ctx.org.id) as conn:
-        await escalate_to_pm(
+        escalate_result = await escalate_to_pm(
             conn,
             _tool_context(ctx, Action.escalate_to_pm),
             EscalateToPmInput(
@@ -353,6 +447,7 @@ async def _needs_human_review(
                 from_email=FROM_ADDRESS_DEFAULT,
             ),
         )
+        await _persist_events(ctx, escalate_result.events, conn=conn)
     return await _transition(ctx, to_state=RunState.needs_human_review, guard_name=reason_code)
 
 
@@ -420,6 +515,7 @@ async def check_followup_or_deadline(
             sequence=ctx.run.outreach_email_count,
         ),
     )
+    await _persist_events(ctx, send_result.events)
     if send_result.status != "ok":
         return None  # transient failure; next tick retries (idempotent)
 
@@ -584,6 +680,88 @@ async def advance_from_document_received(organization_id: UUID, run_id: UUID) ->
     )
 
 
+async def process_inbound_document_to_terminal(
+    organization_id: UUID,
+    run_id: UUID,
+    *,
+    filename: str,
+    data: bytes,
+    content_type: str,
+    storage: DocumentStorage | None = None,
+    engine: ExtractionEngine | None = None,
+) -> RunRow | None:
+    """Production entry point for the inbound-email webhook (qa-evals-
+    engineer / coordinator finding #1, 2026-07-18, SEVERE: nothing in
+    production ever drove `parsing -> validating -> filed -> monitoring` —
+    a real inbound COI would stall in `parsing` forever). Stores the
+    attachment via `handle_inbound_document`, then synchronously drives the
+    SAME individual, independently-tested stage functions —
+    `run_parsing` -> `run_validation` -> `advance_from_filed` — through to
+    whatever terminal-for-this-pass state a guard lands on: `filed`
+    (immediately cascaded further into `monitoring`), `needs_human_review`,
+    `escalated_to_pm`, or `errored`. Each stage function already re-checks
+    the run's CURRENT persisted state before doing anything (see each
+    function's own docstring), so this wrapper adds no new state — it is
+    purely a sequencing convenience, safe to call (or crash mid-call, or
+    have a duplicate concurrent invocation race) exactly as safely as
+    calling those functions individually already was.
+
+    This is the FAST PATH, not the only path: `app/orchestration/
+    scheduler.py`'s `parsing`/`validating`/`filed` sweeps are the SAFETY
+    NET — if this process crashes mid-cascade (e.g. after `run_parsing`
+    commits but before `run_validation` is called), the next scheduler tick
+    resumes the run from wherever it actually persisted to, independent of
+    this function ever running again for it.
+    """
+    result = await handle_inbound_document(
+        organization_id, run_id, filename=filename, data=data, content_type=content_type, storage=storage
+    )
+    return await drive_to_terminal(organization_id, run_id, result, engine=engine, storage=storage)
+
+
+async def drive_to_terminal(
+    organization_id: UUID,
+    run_id: UUID,
+    current: RunRow | None,
+    *,
+    engine: ExtractionEngine | None = None,
+    storage: DocumentStorage | None = None,
+) -> RunRow | None:
+    """Recursive cascade helper for `process_inbound_document_to_terminal`
+    (and reusable by the scheduler's recovery sweeps for the same states).
+    Stops as soon as a stage function returns `None` (guard not satisfied /
+    already elsewhere / transient failure — never retried in a tight loop
+    here; the NEXT trigger, whether a scheduler tick or another webhook
+    delivery, re-evaluates) or lands on a state this function doesn't know
+    how to advance further (needs_human_review, escalated_to_pm, errored,
+    or `monitoring` once `advance_from_filed` completes the cycle).
+    """
+    if current is None:
+        return None
+    try:
+        if current.state == RunState.document_received:
+            nxt = await advance_from_document_received(organization_id, run_id)
+            return await drive_to_terminal(organization_id, run_id, nxt, engine=engine, storage=storage)
+        if current.state == RunState.parsing:
+            nxt = await run_parsing(organization_id, run_id, engine=engine, storage=storage)
+            return await drive_to_terminal(organization_id, run_id, nxt, engine=engine, storage=storage)
+        if current.state == RunState.validating:
+            nxt = await run_validation(organization_id, run_id)
+            return await drive_to_terminal(organization_id, run_id, nxt, engine=engine, storage=storage)
+        if current.state == RunState.filed:
+            nxt = await advance_from_filed(organization_id, run_id)
+            return await drive_to_terminal(organization_id, run_id, nxt, engine=engine, storage=storage)
+    except ExtractionEngineError:
+        # No engine configured (e.g. ANTHROPIC_API_KEY unset) or a
+        # provider-level failure at engine CONSTRUCTION time (which raises
+        # before run_parsing's own per-call error handling can catch it) —
+        # treat as "cannot process right now," not a crash. The run stays
+        # in whatever state it last persisted to; the next scheduler tick
+        # (once configured) or webhook retry resumes it.
+        return None
+    return current
+
+
 # --------------------------------------------------------------------------
 # parsing -> validating | needs_human_review  [tool: parse_document]
 # --------------------------------------------------------------------------
@@ -652,6 +830,7 @@ async def run_parsing(
         engine=engine,
         storage=storage,
     )
+    await _persist_events(ctx, classify_result.events)
     if classify_result.status != "ok":
         # Stay in `parsing`; a later re-invocation (bumped attempt_no) is a
         # fresh idempotency key, or the budget guard above eventually routes
@@ -714,6 +893,7 @@ async def run_parsing(
         engine=engine,
         storage=storage,
     )
+    await _persist_events(ctx, parse_result.events)
 
     if parse_result.status != "ok":
         # Extraction failed (provider error, stub not wired, etc). Counts
@@ -753,7 +933,13 @@ async def run_parsing(
 # --------------------------------------------------------------------------
 
 
-async def run_validation(organization_id: UUID, run_id: UUID) -> RunRow | None:
+async def run_validation(organization_id: UUID, run_id: UUID, *, now: date | None = None) -> RunRow | None:
+    # qa-evals-engineer finding #4 (2026-07-18): thread an explicit `now`
+    # through to write_coi_record's `as_of`, the same way evaluate_expiry/
+    # send_first_outreach/check_followup_or_deadline already accept `now` —
+    # this was previously left to silently default to wall-clock
+    # date.today() inside validation_logic.py.
+    now = now or date.today()
     ctx = await _load_context(run_id, organization_id)
     if ctx is None or ctx.run.state != RunState.validating:
         return None
@@ -771,9 +957,12 @@ async def run_validation(organization_id: UUID, run_id: UUID) -> RunRow | None:
             conn,
             _tool_context(ctx, Action.run_validation),
             UpdateCoiRecordWriteInput(
-                coi_extraction_id=extraction.id, confidence_threshold=ctx.constants.confidence_threshold
+                coi_extraction_id=extraction.id,
+                confidence_threshold=ctx.constants.confidence_threshold,
+                as_of=now,
             ),
         )
+        await _persist_events(ctx, write_result.events, conn=conn)
 
     if write_result.status != "ok":
         return await _errored(ctx, reason=f"update_coi_record_write_failed:{write_result.reason}")
@@ -855,6 +1044,7 @@ async def _summarize_validation_failure(ctx: RunContext, *, data: UpdateCoiRecor
         ),
         engine=engine,
     )
+    await _persist_events(ctx, result.events)
     if result.status != "ok" or result.data is None:
         return deterministic_fallback
     return result.data.explanation_text
@@ -912,6 +1102,7 @@ async def complete_filing(
             _tool_context(ctx, Action.file_document),
             FileDocumentInput(coi_document_id=ctx.run.coi_document_id, valid_from=valid_from, valid_to=valid_to),
         )
+        await _persist_events(ctx, file_result.events, conn=conn)
         if file_result.status != "ok":
             file_failed_reason = file_result.reason
             complete_result = None
@@ -925,6 +1116,7 @@ async def complete_filing(
                     renewal_lead_days=ctx.constants.renewal_lead_days,
                 ),
             )
+            await _persist_events(ctx, complete_result.events, conn=conn)
 
     if complete_result is None:
         return await _errored(ctx, reason=f"file_document_failed:{file_failed_reason}")
@@ -935,7 +1127,7 @@ async def complete_filing(
         # covered" claim on a basis that doesn't actually hold.
         return await _errored(ctx, reason=f"mark_task_complete_denied:{complete_result.reason}")
 
-    await send_email(
+    notice_result = await send_email(
         _tool_context(ctx, Action.notify_pm_handled),
         SendEmailInput(
             to_email=await _pm_email(ctx),
@@ -946,6 +1138,7 @@ async def complete_filing(
             sequence=f"filed-{ctx.run.coi_document_id}",
         ),
     )
+    await _persist_events(ctx, notice_result.events)
 
     next_due_date = complete_result.data.next_due_date
     return await _transition(
@@ -965,6 +1158,56 @@ async def _pm_email(ctx: RunContext) -> str:
     async with org_scoped_tx(ctx.org.id) as conn:
         email = await entity_repo.get_primary_user_email(conn, ctx.org.id)
     return email or FROM_ADDRESS_DEFAULT
+
+
+async def advance_from_filed(organization_id: UUID, run_id: UUID) -> RunRow | None:
+    """filed -> monitoring, deriving `valid_from`/`valid_to` from the
+    current extraction automatically. `complete_filing` itself stays a pure
+    function taking explicit dates (useful for tests and any future
+    PM-override path) — this is the production caller nothing wired up
+    before now (qa-evals-engineer / coordinator finding #3, 2026-07-18).
+    """
+    ctx = await _load_context(run_id, organization_id)
+    if ctx is None or ctx.run.state != RunState.filed:
+        return None
+    if _frozen(ctx):
+        return None
+    if ctx.run.coi_document_id is None:
+        return await _errored(ctx, reason="filed_state_with_no_coi_document_id")
+
+    async with org_scoped_tx(ctx.org.id) as conn:
+        extraction = await entity_repo.get_current_extraction(conn, ctx.run.coi_document_id)
+
+    if extraction is None:
+        return await _errored(ctx, reason="filed_state_with_no_extraction_to_derive_dates_from")
+
+    fields = ExtractedCoiFields.model_validate(extraction.extracted)
+
+    valid_to = fields.policy_expiration_date
+    if valid_to is None:
+        # Defense-in-depth, not the expected path: validating -> filed's
+        # guard already requires a passing validation, and
+        # evaluate_validation fails any extraction missing
+        # policy_expiration_date (validation_logic.py's
+        # missing_expiration_date check) — so this should be unreachable in
+        # practice. Fail safe rather than guess a coverage end date.
+        return await _errored(ctx, reason="filed_state_with_no_policy_expiration_date")
+
+    valid_from = fields.policy_effective_date
+    if valid_from is None:
+        # # ASSUMPTION: evaluate_validation does not currently REQUIRE
+        # policy_effective_date to be present (it only checks "not yet
+        # effective" when the field IS present — see
+        # app/tools/validation_logic.py) — flagged as a validation_logic
+        # gap worth tightening, not fixed here to avoid changing pass/fail
+        # semantics qa-evals-engineer's golden fixtures already assert
+        # against. Fallback: the date Rowan actually processed the
+        # extraction, which is a defensible "coverage presumed to start no
+        # later than" default and, unlike guessing a policy date, is itself
+        # a real, non-fabricated timestamp already on the row.
+        valid_from = extraction.created_at.date()
+
+    return await complete_filing(organization_id, run_id, valid_from=valid_from, valid_to=valid_to)
 
 
 # --------------------------------------------------------------------------
@@ -1042,7 +1285,7 @@ async def resolve_needs_human_review(
                 summary=f"Cannot request a revision from {ctx.vendor.name} — outreach budget exhausted.",
                 details={"escalation_id": str(escalation_id)},
             )
-        await send_email(
+        revision_result = await send_email(
             _tool_context(ctx, Action.follow_up_within_budget),
             SendEmailInput(
                 to_email=ctx.vendor.primary_email,
@@ -1054,6 +1297,7 @@ async def resolve_needs_human_review(
                 sequence=ctx.run.outreach_email_count,
             ),
         )
+        await _persist_events(ctx, revision_result.events)
         next_action_at = datetime.now(timezone.utc) + timedelta(days=ctx.constants.followup_interval_days)
         return await _transition(
             ctx,
@@ -1147,3 +1391,389 @@ async def recover_from_errored(organization_id: UUID, run_id: UUID, *, to_state:
             payload={"recovery_target": to_state.value},
         )
     return updated
+
+
+# --------------------------------------------------------------------------
+# Interface -> Orchestration commands (ADR 0003): AddVendor, SetRequirements,
+# StartRun, PauseRun, ResumeRun, ApproveReview, RejectReview, RequestRevision,
+# ResolveEscalation. These are the entry points app/api/commands.py calls —
+# the Interface layer never touches app/retrieval or app/tools directly
+# (ADR 0003 hard rule #3).
+# --------------------------------------------------------------------------
+
+
+async def add_vendor(
+    organization_id: UUID,
+    *,
+    name: str,
+    primary_email: str | None,
+    vendor_role: str,
+    primary_property_id: UUID | None,
+    notes: str | None,
+    due_date: date | None,
+) -> tuple[VendorRow, RunRow]:
+    """AddVendor (ADR 0003). Creates the vendor AND the `runs` row for its
+    initial renewal cycle in one atomic transaction — a vendor is only ever
+    meaningful with an active run behind it (partial-unique
+    `runs(vendor_id) where status='active'`, ADR 0001), so onboarding creates
+    both together rather than leaving a vendor momentarily run-less.
+
+    `due_date` is the current COI's known expiry, if any (PM-supplied at
+    onboarding; CLAUDE.md non-goals exclude OCR/bulk-import auto-detection of
+    this in v1). If omitted, the run starts in `monitoring` with `due_date =
+    NULL` — `evaluate_expiry`'s guard already treats that as "nothing to do
+    yet" (see that function above), so this is safe; the PM can bring the
+    cycle forward explicitly later via `StartRun`.
+
+    Security-reviewer's binding condition (flagged in two prior reviews):
+    `reply_token` MUST be a CSPRNG-generated value, not a predictable/short
+    token — `secrets.token_urlsafe(32)` (256 bits of entropy) below resolves
+    this. `reply_token_expires_at` is a real, non-null timestamp (see
+    REPLY_TOKEN_VALIDITY_DAYS's ASSUMPTION above for the lifetime choice).
+    """
+    async with org_scoped_tx(organization_id) as conn:
+        org = await entity_repo.get_organization(conn, organization_id)
+        if org is None:
+            raise ValueError("organization not found")
+        if primary_property_id is not None:
+            prop = await entity_repo.get_property(conn, primary_property_id)
+            if prop is None:
+                raise ValueError(f"property {primary_property_id} not found")
+
+        vendor = await entity_repo.insert_vendor(
+            conn,
+            id=uuid7(),
+            organization_id=organization_id,
+            name=name,
+            primary_email=primary_email,
+            vendor_role=vendor_role,
+            primary_property_id=primary_property_id,
+            notes=notes,
+        )
+
+        constants = resolve_constants(org.settings)
+        reply_token = secrets.token_urlsafe(32)
+        reply_token_expires_at = datetime.now(timezone.utc) + timedelta(days=REPLY_TOKEN_VALIDITY_DAYS)
+
+        run = await run_repo.create_run(
+            conn,
+            organization_id=organization_id,
+            vendor_id=vendor.id,
+            trigger="renewal_due" if due_date is not None else "manual",
+            due_date=due_date,
+            budget_cost_cap_cents=constants.budget_cost_cap_cents,
+            reply_token=reply_token,
+            reply_token_expires_at=reply_token_expires_at,
+        )
+
+        await write_event(
+            conn,
+            organization_id=organization_id,
+            run_id=run.id,
+            vendor_id=vendor.id,
+            event_type=EventType.note,
+            name="vendor.added",
+            payload={"vendor_name": vendor.name, "due_date": due_date.isoformat() if due_date else None},
+        )
+
+    return vendor, run
+
+
+async def set_requirements(
+    organization_id: UUID,
+    vendor_id: UUID,
+    *,
+    lines: list[dict[str, Any]] | None = None,
+) -> list[VendorCoverageRequirementRow]:
+    """SetRequirements (ADR 0003). Two modes:
+
+    - `lines=None` (auto): resolves the vendor's jurisdiction/property
+      context (via `vendors.primary_property_id`, the locked "one set per
+      vendor, resolved from primary property" rule, ADR 0005) and retrieves
+      the applicable set from `compliance_requirements` via
+      `V1DeterministicRetriever`. If retrieval returns `found=False`, raises
+      `NoRequirementsOnFileError` — per ADR 0005's fallback, this command
+      NEVER materializes guessed/default requirements.
+    - `lines=[...]`: PM-supplied lines (explicit values per coverage_type,
+      each optionally citing an existing, active `compliance_requirements`
+      row by id — a PM can also submit an uncited override, which
+      `validation_logic.py` already knows to flag as `unverified_requirement`
+      per ADR 0001's `# ASSUMPTION` on `source_compliance_requirement_id`
+      being nullable).
+
+    Either way, calling this command IS the PM confirmation act — every
+    materialized line gets `confirmed_by_pm=True` (CLAUDE.md: onboarding
+    screen imports/pre-fills, but a human still confirms).
+    """
+    async with org_scoped_tx(organization_id) as conn:
+        vendor = await entity_repo.get_vendor(conn, vendor_id)
+        if vendor is None:
+            raise ValueError(f"vendor {vendor_id} not found")
+
+        resolved_lines: list[dict[str, Any]]
+
+        if lines is not None:
+            resolved_lines = []
+            for line in lines:
+                source_id = line.get("source_compliance_requirement_id")
+                if source_id is not None:
+                    kb = await entity_repo.get_compliance_requirement(conn, source_id)
+                    if kb is None or not kb.active:
+                        raise ValueError(
+                            f"compliance_requirement {source_id} not found or inactive"
+                        )
+                resolved_lines.append(line)
+        else:
+            if vendor.primary_property_id is None:
+                raise NoRequirementsOnFileError(
+                    f"Vendor {vendor.name} has no primary_property_id — cannot resolve a "
+                    f"jurisdiction/property context to retrieve requirements for.",
+                    query=RequirementsQuery(
+                        organization_id=organization_id,
+                        jurisdiction_state="",
+                        jurisdiction_city=None,
+                        jurisdiction_hoa=None,
+                        property_type=None,
+                        vendor_role=vendor.vendor_role,
+                    ),
+                )
+            prop = await entity_repo.get_property(conn, vendor.primary_property_id)
+            if prop is None:
+                raise ValueError(f"property {vendor.primary_property_id} not found")
+
+            query = RequirementsQuery(
+                organization_id=organization_id,
+                jurisdiction_state=prop.state,
+                jurisdiction_city=prop.city,
+                jurisdiction_hoa=prop.hoa_name,
+                property_type=prop.property_type,
+                vendor_role=vendor.vendor_role,
+            )
+            retriever = V1DeterministicRetriever(conn)
+            result = await retriever.retrieve(query)
+            if not result.found:
+                raise NoRequirementsOnFileError(
+                    f"No verified compliance requirements on file for "
+                    f"{prop.state}/{prop.city or 'any city'}/{vendor.vendor_role.value}.",
+                    query=query,
+                )
+            resolved_lines = [
+                {
+                    "coverage_type": r.coverage_type.value,
+                    "min_each_occurrence": r.min_each_occurrence,
+                    "min_aggregate": r.min_aggregate,
+                    "requires_additional_insured": r.requires_additional_insured,
+                    "requires_waiver_of_subrogation": r.requires_waiver_of_subrogation,
+                    "requires_primary_noncontributory": r.requires_primary_noncontributory,
+                    "source_compliance_requirement_id": r.id,
+                }
+                for r in result.requirements
+            ]
+
+        materialized: list[VendorCoverageRequirementRow] = []
+        for line in resolved_lines:
+            vcr = await entity_repo.upsert_vendor_coverage_requirement(
+                conn,
+                id=uuid7(),
+                organization_id=organization_id,
+                vendor_id=vendor_id,
+                coverage_type=line["coverage_type"],
+                min_each_occurrence=line.get("min_each_occurrence"),
+                min_aggregate=line.get("min_aggregate"),
+                requires_additional_insured=bool(line.get("requires_additional_insured", False)),
+                requires_waiver_of_subrogation=bool(line.get("requires_waiver_of_subrogation", False)),
+                requires_primary_noncontributory=bool(line.get("requires_primary_noncontributory", False)),
+                source_compliance_requirement_id=line.get("source_compliance_requirement_id"),
+                confirmed_by_pm=True,
+            )
+            materialized.append(vcr)
+
+        await write_event(
+            conn,
+            organization_id=organization_id,
+            run_id=None,
+            vendor_id=vendor_id,
+            event_type=EventType.note,
+            name="vendor.requirements_set",
+            payload={
+                "coverage_types": [line["coverage_type"] for line in resolved_lines],
+                "auto_retrieved": lines is None,
+            },
+        )
+
+    return materialized
+
+
+async def start_run_now(organization_id: UUID, run_id: UUID, *, now: datetime | None = None) -> RunRow | None:
+    """StartRun (ADR 0003) — a "kill-switch-adjacent" run-lifecycle control,
+    the PM-initiated counterpart to the scheduler's date-driven
+    `evaluate_expiry`. ADR 0002 only specifies a `scheduler` trigger for
+    `monitoring -> renewal_due_soon` (guard: due_date - lead reached); this
+    adds a `human` trigger for the SAME edge that bypasses the date guard
+    entirely (a PM explicitly asking Rowan to request this vendor's COI
+    right now, e.g. at onboarding, or because they know something the
+    schedule doesn't). No new state, no new edge shape — same transition,
+    same guarded cascade into `send_first_outreach` — only a new trigger
+    kind for an edge ADR 0002 didn't enumerate a human variant for.
+    # ASSUMPTION: flagged to architect as a state-machine-adjacent addition
+    worth a look, not a redesign — see PR description.
+    """
+    now = now or datetime.now(timezone.utc)
+    ctx = await _load_context(run_id, organization_id)
+    if ctx is None:
+        return None
+    if ctx.run.state not in (RunState.monitoring, RunState.renewal_due_soon):
+        return None  # already in flight (or terminal) — manual start only applies pre-outreach
+    if _frozen(ctx):
+        return None
+
+    if ctx.run.state == RunState.monitoring:
+        transitioned = await _transition(ctx, to_state=RunState.renewal_due_soon, guard_name="manual_start")
+        if transitioned is None:
+            return None
+        ctx.run = transitioned
+
+    return await send_first_outreach(organization_id, run_id, now=now)
+
+
+async def pause_run(organization_id: UUID, run_id: UUID, *, paused_by: UUID | None) -> RunRow | None:
+    """PauseRun (ADR 0003) — the run-level kill switch, "PM takes over" per
+    CLAUDE.md. `check_kill_switches` (app/policy/guardrails.py) already
+    treats `runs.status == 'paused'` as freezing every outbound action for
+    this run; this command is simply the write path for that flag, plus the
+    trace event so a pause is visible in the run's timeline, not a silent
+    state change.
+    """
+    ctx = await _load_context(run_id, organization_id)
+    if ctx is None or ctx.run.status != RunStatus.active:
+        return None  # no-op if already paused/completed/errored — idempotent
+    async with org_scoped_tx(organization_id) as conn:
+        updated = await run_repo.set_run_status(conn, run_id, RunStatus.paused, paused_by=paused_by)
+        await write_event(
+            conn,
+            organization_id=organization_id,
+            run_id=run_id,
+            vendor_id=ctx.vendor.id,
+            event_type=EventType.human_intervention,
+            name="run.paused",
+            payload={"paused_by": str(paused_by) if paused_by else None},
+        )
+    return updated
+
+
+async def resume_run(organization_id: UUID, run_id: UUID) -> RunRow | None:
+    """ResumeRun (ADR 0003) — un-freezes a PM-paused run. The run resumes
+    from whatever state it was frozen in; no transition happens here, the
+    next scheduler tick / webhook / human action re-evaluates that state's
+    guards normally now that `check_kill_switches` no longer denies it."""
+    ctx = await _load_context(run_id, organization_id)
+    if ctx is None or ctx.run.status != RunStatus.paused:
+        return None  # no-op if not currently paused — idempotent
+    async with org_scoped_tx(organization_id) as conn:
+        updated = await run_repo.set_run_status(conn, run_id, RunStatus.active, paused_by=None)
+        await write_event(
+            conn,
+            organization_id=organization_id,
+            run_id=run_id,
+            vendor_id=ctx.vendor.id,
+            event_type=EventType.human_intervention,
+            name="run.resumed",
+            payload={},
+        )
+    return updated
+
+
+async def _load_open_escalation_for_command(
+    organization_id: UUID, escalation_id: UUID, *, expected_kind: str
+) -> EscalationRow | None:
+    """Shared guard for the four review/escalation commands below.
+
+    security-reviewer's flagged observation (non-blocking, prior review):
+    `escalations` rows are created keyed on the run_state AT CREATION TIME
+    (see `entity_repo.get_open_escalation`, used only by `escalate_to_pm`'s
+    own internal dedupe). Dispatch from the API must NOT repeat that mistake
+    by joining against the run's CURRENT state — it looks the escalation up
+    by `kind` + `status='open'` ONLY, so a review-queue item is resolvable
+    exactly as long as it's actually open, independent of whatever the run
+    has done since. RLS (via org_scoped_tx) already prevents cross-org
+    access; this adds the kind/status/ownership checks a bare `escalation_id`
+    path param can't otherwise guarantee.
+    """
+    async with org_scoped_tx(organization_id) as conn:
+        esc = await entity_repo.get_escalation(conn, escalation_id)
+    if esc is None or esc.status.value != "open" or esc.kind.value != expected_kind:
+        return None
+    return esc
+
+
+async def approve_review(
+    organization_id: UUID, escalation_id: UUID, *, resolved_by: UUID | None
+) -> RunRow | None:
+    """ApproveReview (ADR 0003) -> resolve_needs_human_review(decision='approve')."""
+    esc = await _load_open_escalation_for_command(
+        organization_id, escalation_id, expected_kind="needs_human_review"
+    )
+    if esc is None:
+        return None
+    return await resolve_needs_human_review(
+        organization_id, esc.run_id, decision="approve", escalation_id=escalation_id, resolved_by=resolved_by
+    )
+
+
+async def reject_review(
+    organization_id: UUID, escalation_id: UUID, *, resolved_by: UUID | None
+) -> RunRow | None:
+    """RejectReview (ADR 0003) -> resolve_needs_human_review(decision='reject')."""
+    esc = await _load_open_escalation_for_command(
+        organization_id, escalation_id, expected_kind="needs_human_review"
+    )
+    if esc is None:
+        return None
+    return await resolve_needs_human_review(
+        organization_id, esc.run_id, decision="reject", escalation_id=escalation_id, resolved_by=resolved_by
+    )
+
+
+async def request_revision(
+    organization_id: UUID,
+    escalation_id: UUID,
+    *,
+    resolved_by: UUID | None,
+    revision_reason: str | None = None,
+) -> RunRow | None:
+    """RequestRevision (ADR 0003) -> resolve_needs_human_review(decision='request_revision')."""
+    esc = await _load_open_escalation_for_command(
+        organization_id, escalation_id, expected_kind="needs_human_review"
+    )
+    if esc is None:
+        return None
+    return await resolve_needs_human_review(
+        organization_id,
+        esc.run_id,
+        decision="request_revision",
+        escalation_id=escalation_id,
+        resolved_by=resolved_by,
+        revision_reason=revision_reason,
+    )
+
+
+async def resolve_escalation(
+    organization_id: UUID,
+    escalation_id: UUID,
+    *,
+    decision: str,  # 'resolved' | 'keep_chasing'
+    resolved_by: UUID | None,
+) -> RunRow | None:
+    """ResolveEscalation (ADR 0003) -> resolve_escalated_to_pm(...). This is
+    the `kind='escalated_to_pm'` counterpart to Approve/Reject/RequestRevision
+    (which are all `kind='needs_human_review'`) — the PM-escalations queue,
+    not the document-review queue.
+    """
+    esc = await _load_open_escalation_for_command(
+        organization_id, escalation_id, expected_kind="escalated_to_pm"
+    )
+    if esc is None:
+        return None
+    return await resolve_escalated_to_pm(
+        organization_id, esc.run_id, decision=decision, escalation_id=escalation_id, resolved_by=resolved_by
+    )

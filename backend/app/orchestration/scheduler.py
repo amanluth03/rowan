@@ -21,6 +21,8 @@ from app.models.enums import RunState
 from app.orchestration import runner
 from app.retrieval import run_repo
 from app.db import org_scoped_tx
+from app.storage import DocumentStorage
+from app.tools.parse_document import ExtractionEngine
 
 
 async def _enumerate_enabled_org_ids() -> list[Any]:
@@ -29,11 +31,24 @@ async def _enumerate_enabled_org_ids() -> list[Any]:
     return [r["id"] for r in rows]
 
 
-async def scheduler_tick(*, now: date | None = None, now_dt: datetime | None = None) -> dict[str, int]:
+async def scheduler_tick(
+    *,
+    now: date | None = None,
+    now_dt: datetime | None = None,
+    engine: ExtractionEngine | None = None,
+    storage: DocumentStorage | None = None,
+) -> dict[str, int]:
     """One sweep across every enabled org. Safe to call repeatedly / on an
     overlapping schedule: every underlying transition is itself idempotent
     (CAS + tool_invocations), so a duplicate tick just re-evaluates guards
     that, in the common case, no longer hold.
+
+    `engine`/`storage` are injection seams for the `parsing`-state recovery
+    sweep (a FakeEngine in tests; production omits both, so `run_parsing`
+    defaults to the real `ClaudeExtractionEngine` — gracefully caught and
+    skipped for this tick if unconfigured, see
+    `app.orchestration.runner.drive_to_terminal`'s `ExtractionEngineError`
+    handling).
     """
     now = now or date.today()
     now_dt = now_dt or datetime.now(timezone.utc)
@@ -48,6 +63,14 @@ async def scheduler_tick(*, now: date | None = None, now_dt: datetime | None = N
             renewal_due_runs = await run_repo.list_runs_in_state(conn, RunState.renewal_due_soon)
             awaiting_wakeups = await run_repo.list_runs_awaiting_wakeup(conn, now=now_dt)
             document_received_runs = await run_repo.list_runs_in_state(conn, RunState.document_received)
+            # Crash-recovery sweeps (qa-evals-engineer / coordinator finding
+            # #1, 2026-07-18, severe): parsing/validating/filed previously
+            # had NO recovery path at all — only document_received did.
+            # A run whose driving webhook process crashed mid-cascade (see
+            # runner.drive_to_terminal) would otherwise stall forever.
+            parsing_runs = await run_repo.list_runs_in_state(conn, RunState.parsing)
+            validating_runs = await run_repo.list_runs_in_state(conn, RunState.validating)
+            filed_runs = await run_repo.list_runs_in_state(conn, RunState.filed)
 
         for run in monitoring_runs:
             result = await runner.evaluate_expiry(org_id, run.id, now=now)
@@ -74,7 +97,32 @@ async def scheduler_tick(*, now: date | None = None, now_dt: datetime | None = N
         # died between storing the attachment and cascading to parsing)
         # gets a chance to resume here, not just on the next fresh webhook.
         for run in document_received_runs:
-            result = await runner.advance_from_document_received(org_id, run.id)
+            result = await runner.drive_to_terminal(org_id, run.id, run, engine=engine, storage=storage)
+            if result is not None:
+                stats["runs_advanced"] += 1
+                if result.state == RunState.escalated_to_pm:
+                    stats["runs_escalated"] += 1
+
+        # parsing -> validating -> filed -> monitoring recovery, resumed
+        # from wherever each run actually is (drive_to_terminal re-checks
+        # current state itself; the RunRow passed in is just a starting
+        # hint from the list_runs_in_state query above).
+        for run in parsing_runs:
+            result = await runner.drive_to_terminal(org_id, run.id, run, engine=engine, storage=storage)
+            if result is not None:
+                stats["runs_advanced"] += 1
+                if result.state == RunState.escalated_to_pm:
+                    stats["runs_escalated"] += 1
+
+        for run in validating_runs:
+            result = await runner.drive_to_terminal(org_id, run.id, run, engine=engine, storage=storage)
+            if result is not None:
+                stats["runs_advanced"] += 1
+                if result.state == RunState.escalated_to_pm:
+                    stats["runs_escalated"] += 1
+
+        for run in filed_runs:
+            result = await runner.drive_to_terminal(org_id, run.id, run, engine=engine, storage=storage)
             if result is not None:
                 stats["runs_advanced"] += 1
 

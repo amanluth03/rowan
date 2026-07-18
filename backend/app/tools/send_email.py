@@ -53,6 +53,7 @@ change was needed once the ADRs were reconciled.
 
 from __future__ import annotations
 
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -63,9 +64,25 @@ from app.models.enums import EventSeverity, EventType, ToolStatus
 from app.models.tool_contracts import PendingEvent, ToolContext, ToolOutput
 from app.retrieval import entity_repo, run_repo
 from app.tools import email_templates, idempotency, keys
+from app.tools.resend_client import SendResult
 from app.tools.resend_client import send as resend_send
 
 TOOL_NAME = "send_email"
+
+
+class EmailTransport(Protocol):
+    """DI seam for send_email's outbound call (qa-evals-engineer finding
+    #5, 2026-07-18, low priority: no injectable transport existed, so
+    tests/evals could never assert "was an email actually sent" against a
+    controllable double — everything went through the real
+    `resend_client.send`, which only ever simulates when unconfigured).
+    Matches `app.tools.resend_client.send`'s signature exactly; defaults to
+    that real implementation, so no caller needs to change to keep working.
+    """
+
+    async def __call__(
+        self, *, to_email: str, from_email: str, subject: str, html_body: str, reply_to: str | None = None
+    ) -> SendResult: ...
 
 VENDOR_OUTREACH_TEMPLATES = {"first_outreach", "follow_up", "revision_request"}
 PM_NOTICE_TEMPLATES = {"handled_notice", "escalation_notice"}
@@ -91,7 +108,10 @@ class SendEmailData(BaseModel):
     delivery_status: str
 
 
-async def send_email(context: ToolContext, input: SendEmailInput) -> ToolOutput[SendEmailData]:
+async def send_email(
+    context: ToolContext, input: SendEmailInput, *, transport: EmailTransport | None = None
+) -> ToolOutput[SendEmailData]:
+    transport = transport or resend_send
     if input.template_id not in ALL_TEMPLATES:
         return ToolOutput(status=ToolStatus.failed, reason=f"unknown template_id {input.template_id}")
 
@@ -134,7 +154,7 @@ async def send_email(context: ToolContext, input: SendEmailInput) -> ToolOutput[
     subject, html_body = email_templates.render(input.template_id, input.template_vars)
 
     # --- external call, no DB transaction held open ---
-    result = await resend_send(
+    result = await transport(
         to_email=input.to_email,
         from_email=input.from_email,
         subject=subject,

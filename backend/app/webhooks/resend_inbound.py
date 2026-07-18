@@ -26,8 +26,9 @@ from uuid import UUID
 
 from app.config import settings
 from app.db import org_scoped_tx, system_conn
-from app.orchestration.runner import handle_inbound_document
+from app.orchestration.runner import process_inbound_document_to_terminal
 from app.tools import idempotency
+from app.tools.parse_document import ExtractionEngine
 
 REPLY_TOKEN_PATTERN = re.compile(r"^([^@]+)@reply\.rowan\.[a-zA-Z0-9.\-]+$")
 
@@ -93,8 +94,17 @@ async def _resolve_run(reply_token: str) -> tuple[UUID, UUID] | None:
 
 
 async def handle_inbound_webhook(
-    *, body: bytes, svix_id: str, svix_timestamp: str, svix_signature: str
+    *,
+    body: bytes,
+    svix_id: str,
+    svix_timestamp: str,
+    svix_signature: str,
+    engine: ExtractionEngine | None = None,
 ) -> dict[str, Any]:
+    """`engine` is an injection seam for tests (a FakeEngine, per
+    app/tools/parse_document.py's documented ExtractionEngine interface) —
+    production callers (app/main.py's route) omit it, so it defaults to the
+    real ClaudeExtractionEngine inside run_parsing."""
     verify_signature(
         secret=settings.resend_webhook_secret,
         svix_id=svix_id,
@@ -150,12 +160,19 @@ async def handle_inbound_webhook(
     first = attachments[0]
     file_bytes = base64.b64decode(first["content_base64"])
 
-    result = await handle_inbound_document(
+    # Finding #1 fix (qa-evals-engineer / coordinator, 2026-07-18, severe):
+    # this used to call handle_inbound_document alone, which only advances
+    # awaiting_vendor_response -> document_received -> parsing and then
+    # stops — nothing downstream ever drove parsing -> validating -> filed
+    # -> monitoring. process_inbound_document_to_terminal drives the full
+    # cascade (see its docstring in app/orchestration/runner.py).
+    result = await process_inbound_document_to_terminal(
         organization_id,
         run_id,
         filename=first.get("filename", "attachment"),
         data=file_bytes,
         content_type=first.get("content_type", "application/octet-stream"),
+        engine=engine,
     )
 
     async with org_scoped_tx(organization_id) as conn:

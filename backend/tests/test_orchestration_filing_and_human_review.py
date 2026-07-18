@@ -4,6 +4,7 @@ the human-triggered transitions out of needs_human_review / escalated_to_pm
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -13,6 +14,7 @@ from app.ids import uuid7
 from app.models.coi_fields import ExtractedCoiFields, ExtractedCoverageLine
 from app.models.enums import CoverageType, RunState
 from app.orchestration.runner import (
+    advance_from_filed,
     complete_filing,
     recover_from_errored,
     resolve_escalated_to_pm,
@@ -101,6 +103,70 @@ class TestCompleteFiling:
             org_and_vendor["org_id"], run_id, valid_from=date(2026, 1, 1), valid_to=date(2027, 1, 1)
         )
         assert r2 is None  # already left 'filed'; no-op, no double notify/complete
+
+
+class TestAdvanceFromFiled:
+    """Regression tests for qa-evals-engineer finding #3 (2026-07-18):
+    `complete_filing` had no automatic caller deriving `valid_from`/
+    `valid_to` from the extraction — nothing in production ever called it
+    with real dates. `advance_from_filed` is that caller.
+    """
+
+    async def test_derives_dates_from_extraction_and_completes(self, org_and_vendor, make_run):
+        run_id, doc, validation = await _make_run_in_filed(org_and_vendor, make_run)
+        result = await advance_from_filed(org_and_vendor["org_id"], run_id)
+        assert result is not None
+        assert result.state == RunState.monitoring
+        # _clean_extraction() fixture uses policy_expiration_date=2027-01-01,
+        # RENEWAL_LEAD_DAYS default 30.
+        assert result.due_date == date(2027, 1, 1) - timedelta(days=30)
+
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            filed_doc = await entity_repo.get_coi_document(conn, doc.id)
+        assert filed_doc.valid_from == date(2026, 1, 1)
+        assert filed_doc.valid_to == date(2027, 1, 1)
+
+    async def test_missing_expiration_date_errors_rather_than_guessing(self, org_and_vendor, make_run):
+        run_id, doc, validation = await _make_run_in_filed(org_and_vendor, make_run)
+        # Overwrite the extraction to have no policy_expiration_date at all
+        # (defense-in-depth: should not normally happen, since a passing
+        # validation already requires one — see validation_logic.py's
+        # missing_expiration_date check — but advance_from_filed must still
+        # fail safe rather than guess a date if it ever does).
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            current_ext = await entity_repo.get_current_extraction(conn, doc.id)
+            broken = _clean_extraction(policy_expiration_date=None)
+            await conn.execute(
+                "update coi_extractions set extracted = $2 where id = $1",
+                current_ext.id, json.dumps(broken.model_dump(mode="json")),
+            )
+
+        result = await advance_from_filed(org_and_vendor["org_id"], run_id)
+        assert result is not None
+        assert result.state == RunState.errored
+
+    async def test_missing_effective_date_falls_back_to_extraction_processed_date(self, org_and_vendor, make_run):
+        """policy_effective_date is optional in validation_logic.py (only
+        checked when present) — so a passing validation doesn't guarantee
+        it exists. advance_from_filed must not crash; the documented
+        fallback is the date Rowan processed the extraction."""
+        run_id, doc, validation = await _make_run_in_filed(org_and_vendor, make_run)
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            current_ext = await entity_repo.get_current_extraction(conn, doc.id)
+            no_effective_date = _clean_extraction(policy_effective_date=None)
+            await conn.execute(
+                "update coi_extractions set extracted = $2 where id = $1",
+                current_ext.id, json.dumps(no_effective_date.model_dump(mode="json")),
+            )
+            expected_fallback = current_ext.created_at.date()
+
+        result = await advance_from_filed(org_and_vendor["org_id"], run_id)
+        assert result is not None
+        assert result.state == RunState.monitoring
+
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            filed_doc = await entity_repo.get_coi_document(conn, doc.id)
+        assert filed_doc.valid_from == expected_fallback
 
 
 class TestNeedsHumanReviewDecisions:

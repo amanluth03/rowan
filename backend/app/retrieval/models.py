@@ -21,6 +21,7 @@ from app.models.enums import (
     EscalationKind,
     EscalationStatus,
     EventSeverity,
+    EventType,
     PropertyType,
     RunState,
     RunStatus,
@@ -183,6 +184,28 @@ class EscalationRow(BaseModel):
     resolution: str | None
     created_at: datetime
     resolved_at: datetime | None
+
+
+class AgentEventRow(BaseModel):
+    id: UUID
+    organization_id: UUID
+    run_id: UUID | None
+    vendor_id: UUID | None
+    event_type: EventType
+    name: str
+    severity: EventSeverity
+    from_state: RunState | None
+    to_state: RunState | None
+    tool_name: str | None
+    idempotency_key: str | None
+    llm_model: str | None
+    prompt_hash: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cost_cents: int | None
+    latency_ms: int | None
+    payload: dict[str, Any]
+    created_at: datetime
 
 
 class EmailMessageRow(BaseModel):

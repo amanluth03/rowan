@@ -13,6 +13,7 @@ feeds this comparison (agent-engineer's `parse_document`).
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 import asyncpg
@@ -68,6 +69,14 @@ async def read_coi_record(
 class UpdateCoiRecordWriteInput(BaseModel):
     coi_extraction_id: UUID
     confidence_threshold: float
+    # qa-evals-engineer finding #4 (2026-07-18): must be explicitly supplied
+    # by the caller (orchestration's own frozen `now`), not silently
+    # defaulted to wall-clock date.today() — see evaluate_validation's own
+    # `as_of` parameter in app/tools/validation_logic.py. None is preserved
+    # as a fallback for callers/tests that genuinely want "real today" (it
+    # falls through to validation_logic's own `as_of or date.today()`), but
+    # app/orchestration/runner.py always passes one explicitly now.
+    as_of: date | None = None
 
 
 class UpdateCoiRecordWriteData(BaseModel):
@@ -145,6 +154,7 @@ async def write_coi_record(
         extraction=fields,
         active_kb_ids=active_kb_ids,
         confidence_threshold=input.confidence_threshold,
+        as_of=input.as_of,
     )
 
     validation_row: CoiValidationRow = await entity_repo.insert_coi_validation(

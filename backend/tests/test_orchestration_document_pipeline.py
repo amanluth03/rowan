@@ -8,7 +8,7 @@ ADR 0005, not fall through to needs_human_review.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -209,6 +209,24 @@ async def test_validation_pass_routes_to_filed(org_and_vendor, make_run):
     result = await run_validation(org_and_vendor["org_id"], run_id)
     assert result is not None
     assert result.state == RunState.filed
+
+
+async def test_run_validation_honors_explicit_now_not_wall_clock(org_and_vendor, make_run):
+    """Regression test for qa-evals-engineer finding #4: run_validation must
+    thread an explicit `now` down to write_coi_record's `as_of`, the same
+    way evaluate_expiry/send_first_outreach/check_followup_or_deadline
+    already accept `now`. A clean extraction valid against real today must
+    FAIL when orchestration is told "now" is a year past the expiration.
+    """
+    extraction = _clean_extraction(
+        policy_effective_date=date.today() - timedelta(days=30),
+        policy_expiration_date=date.today() + timedelta(days=10),
+    )
+    run_id, doc, ext = await _make_run_in_validating(org_and_vendor, make_run, extraction)
+    frozen_future = date.today() + timedelta(days=365)
+    result = await run_validation(org_and_vendor["org_id"], run_id, now=frozen_future)
+    assert result is not None
+    assert result.state == RunState.needs_human_review
 
 
 async def test_validation_fail_routes_to_needs_human_review(org_and_vendor, make_run):

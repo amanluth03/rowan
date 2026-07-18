@@ -109,6 +109,59 @@ class TestWriteUpdateCoiRecord:
         assert replay.idempotent_replay is True
         assert replay.data.validation_id == result.data.validation_id
 
+    async def test_explicit_as_of_is_honored_not_wall_clock(self, org_and_vendor, make_run):
+        """Regression test (qa-evals-engineer finding #4, 2026-07-18):
+        write_coi_record must use a caller-supplied `as_of`, not silently
+        default to real wall-clock `date.today()` — otherwise "is this
+        policy expired/not-yet-effective" drifts with real time instead of
+        being pinned to the run's/fixture's frozen `now`.
+
+        Construct an extraction whose `policy_expiration_date` is in the
+        future relative to REAL today (so it would incorrectly PASS if
+        as_of were ignored), but in the PAST relative to an explicit,
+        far-future `as_of` we pass in (so it must FAIL if as_of is actually
+        honored).
+        """
+        run_id = await make_run()
+        doc = await _insert_document(org_and_vendor["org_id"], org_and_vendor["vendor_id"], run_id)
+
+        real_today = date.today()
+        frozen_future_as_of = real_today + timedelta(days=365)
+
+        extraction = ExtractedCoiFields(
+            policy_effective_date=real_today - timedelta(days=30),
+            policy_expiration_date=real_today + timedelta(days=10),  # valid vs. real today
+            coverage_lines=[
+                ExtractedCoverageLine(
+                    coverage_type=CoverageType.general_liability,
+                    each_occurrence=1_000_000,
+                    aggregate=2_000_000,
+                    additional_insured=True,
+                    confidence=0.95,
+                )
+            ],
+            overall_confidence=0.95,
+        )
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            ext_row = await entity_repo.insert_coi_extraction(
+                conn, id=uuid7(), organization_id=org_and_vendor["org_id"], run_id=run_id,
+                coi_document_id=doc.id, extracted=extraction.model_dump(mode="json"),
+                field_confidence={}, overall_confidence=0.95, model="test", prompt_hash="ph",
+                input_tokens=1, output_tokens=1, cost_cents=1,
+            )
+
+        ctx = _context(run_id, org_and_vendor["org_id"], key=f"validate-asof-{run_id}")
+        write_input = UpdateCoiRecordWriteInput(
+            coi_extraction_id=ext_row.id, confidence_threshold=0.8, as_of=frozen_future_as_of
+        )
+
+        async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
+            result = await write_coi_record(conn, ctx, write_input)
+
+        assert result.status == ToolStatus.ok
+        assert result.data.result == "fail", "as_of was not honored — validation used wall-clock today instead"
+        assert any(f.get("code") == "policy_expired" for f in result.data.flags)
+
 
 class TestFileDocument:
     async def test_files_and_supersedes(self, org_and_vendor, make_run):
@@ -283,3 +336,34 @@ class TestSendEmail:
         async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
             run = await conn.fetchrow("select outreach_email_count from runs where id = $1", run_id)
         assert run["outreach_email_count"] == 0
+
+    async def test_transport_is_injectable(self, org_and_vendor, make_run):
+        """Regression test for qa-evals-engineer finding #5 (2026-07-18,
+        low priority): send_email always called the real resend_client.send
+        directly, with no seam for tests/evals to assert "was an email
+        actually sent" against a controllable double. Adds an injectable
+        `transport` parameter, defaulting to the real client.
+        """
+        from app.tools.resend_client import SendResult
+
+        calls = []
+
+        async def fake_transport(*, to_email, from_email, subject, html_body, reply_to=None):
+            calls.append({"to_email": to_email, "subject": subject})
+            return SendResult(ok=True, provider_message_id="fake_injected_id")
+
+        run_id = await make_run()
+        ctx = _context(run_id, org_and_vendor["org_id"])
+        result = await send_email(
+            ctx,
+            SendEmailInput(
+                to_email="vendor@example.com", from_email="rowan@example.com",
+                template_id="first_outreach", template_vars={"vendor_name": "Test Vendor"},
+                vendor_id=org_and_vendor["vendor_id"], sequence=0,
+            ),
+            transport=fake_transport,
+        )
+        assert result.status == ToolStatus.ok
+        assert result.data.provider_message_id == "fake_injected_id"
+        assert len(calls) == 1
+        assert calls[0]["to_email"] == "vendor@example.com"
