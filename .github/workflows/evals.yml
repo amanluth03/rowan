@@ -1,0 +1,92 @@
+name: Evals
+
+# Three tiers, deliberately separated so a fast/free/offline signal is always
+# available regardless of how much of backend/agent-engineer's code has
+# landed:
+#
+#   1. fixture-integrity   — always runs, offline, no external calls. Checks
+#                             the golden-document set and harness contracts
+#                             themselves are well-formed (CLAUDE.md's 15-20
+#                             fixtures / >=3 adversarial / etc requirements).
+#   2. trajectory-mocked   — runs the trajectory + retrieval + faithfulness
+#                             harness, PLUS test_validation_logic.py's real
+#                             (non-mocked) check against backend's actual
+#                             `evaluate_validation`. Pieces of backend that
+#                             don't exist yet (the orchestration pipeline,
+#                             a DB-backed retriever connection) skip
+#                             meaningfully rather than fail; pieces that do
+#                             exist (validation_logic, a pure function) run
+#                             for real, today. Gates via ci/check_thresholds.py.
+#   3. golden-evals-real   — calls the real Claude API against the golden
+#                             fixture set to score actual extraction
+#                             accuracy. Slow + costs money: gated to manual
+#                             dispatch (and a commented-out nightly schedule,
+#                             pending cost sign-off) and requires the
+#                             ANTHROPIC_API_KEY secret.
+#
+# NOTE: test_validation_logic.py imports `app.tools.validation_logic`
+# directly off `backend/` (see harness/validation_adapter.py, which puts
+# backend/ on sys.path) — that module's own dependency chain is pydantic-only
+# (no asyncpg/DB), so tests/evals/requirements-eval.txt alone is sufficient
+# for job 2 below. If backend adds a heavier import chain to that module
+# later, add `pip install backend/` (or its dep file) ahead of the pytest
+# step rather than standing up a second workflow file.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 13 * * *"  # ASSUMPTION: nightly real-model run, commented out
+  #                          # pending cost sign-off from the tech lead —
+  #                          # uncomment once BUDGET_COST_CAP_CENTS-style
+  #                          # spend for CI itself has an owner.
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tests/evals/requirements-eval.txt
+      - run: pytest tests/evals/test_fixture_integrity.py -v
+
+  trajectory-mocked:
+    runs-on: ubuntu-latest
+    needs: fixture-integrity
+    env:
+      ROWAN_EVAL_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tests/evals/requirements-eval.txt
+      - name: Run trajectory + retrieval + faithfulness suites
+        run: pytest tests/evals -v -m "not golden_real"
+      - name: Check regression thresholds
+        run: python -m tests.evals.ci.check_thresholds
+
+  golden-evals-real-model:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: fixture-integrity
+    env:
+      ROWAN_EVAL_MODE: real
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tests/evals/requirements-eval.txt
+      - name: Run golden-document suite against the real Claude API
+        run: pytest tests/evals/test_golden_documents.py -v -m golden_document
+      - name: Check regression thresholds (strict — this job must have real results)
+        run: python -m tests.evals.ci.check_thresholds --strict

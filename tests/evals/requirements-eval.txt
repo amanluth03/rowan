@@ -1,0 +1,9 @@
+# Minimal dependency set to run the eval harness (fixture integrity,
+# faithfulness, retrieval, and golden-document trajectory tests) on its own,
+# independent of whatever backend/agent-engineer's full requirements.txt
+# ends up being. CI installs this file directly (see
+# .github/workflows/evals.yml) rather than the (currently nonexistent)
+# project-wide requirements, so the eval harness stays runnable even before
+# backend code lands.
+pytest>=8.0
+pydantic>=2.6

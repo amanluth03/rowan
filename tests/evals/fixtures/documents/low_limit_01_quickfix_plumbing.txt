@@ -1,0 +1,34 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 07/02/2026
+
+PRODUCER: Discount Trade Insurance Services, 22 Merritt Rd, Oakland, CA 94602
+CONTACT: (510) 555-0341   EMAIL: certs@discounttradeins.test
+
+INSURED: QuickFix Plumbing
+         88 Franklin St, Oakland, CA 94607
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Budget Trade Mutual                       NAIC #: 12009
+
+CERTIFICATE NUMBER: CL-2026-11209
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-0091122-26        07/05/2026     07/05/2027   EACH OCCURRENCE        $500,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $1,000,000
+
+AUTOMOBILE LIABILITY             A   AL-0091144-26        07/05/2026     07/05/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-0091177-26        07/05/2026     07/05/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Plumbing services at Oakland Terrace Apartments. Additional Insured, Waiver of Subrogation, and
+Primary & Non-Contributory status apply to General Liability per attached endorsements.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Oakland Terrace Apartments
+2100 Broadway, Oakland, CA 94612
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ J. Kim

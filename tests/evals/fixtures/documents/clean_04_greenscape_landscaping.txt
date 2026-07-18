@@ -1,0 +1,37 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 04/22/2026
+
+PRODUCER: Lakeview Insurance Agency, 12 Shoreline Dr, Oakland, CA 94612
+CONTACT: (510) 555-0212   EMAIL: certs@lakeviewinsurance.test
+
+INSURED: Greenscape Landscaping LLC
+         900 Park St, Oakland, CA 94605
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Summit National Insurance                 NAIC #: 90211
+INSURER B: Coastal Surety Group                       NAIC #: 10938
+
+CERTIFICATE NUMBER: CL-2026-55210
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-3301774-26        05/01/2026     05/01/2027   EACH OCCURRENCE        $2,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $4,000,000
+
+AUTOMOBILE LIABILITY             B   AL-4402981-26        05/01/2026     05/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-2209981-26        05/01/2026     05/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Grounds maintenance and landscaping services at Lakeview Commons Condominiums. Additional
+Insured, Waiver of Subrogation, and Primary & Non-Contributory status apply to General Liability
+per endorsements CG 20 33, CG 24 04, and CG 20 01 as required by the HOA's vendor insurance
+rider.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Lakeview Commons Condominiums / Lakeview HOA
+44 Lakeshore Ave, Oakland, CA 94612
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ T. Okafor

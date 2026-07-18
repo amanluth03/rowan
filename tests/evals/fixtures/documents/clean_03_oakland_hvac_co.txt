@@ -1,0 +1,36 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 07/03/2026
+
+PRODUCER: Central Valley Insurance Partners, 900 Fulton Ave, Fresno, CA 93721
+CONTACT: (559) 555-0199   EMAIL: certs@cvinsurance.test
+
+INSURED: Oakland HVAC Solutions
+         77 Industrial Way, Oakland, CA 94601
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Sequoia Mutual Insurance                  NAIC #: 66442
+INSURER B: Delta Assurance Co.                        NAIC #: 77531
+
+CERTIFICATE NUMBER: CL-2026-90341
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-6602198-26        07/10/2026     07/10/2027   EACH OCCURRENCE        $1,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $2,000,000
+
+AUTOMOBILE LIABILITY             B   AL-7712045-26        07/10/2026     07/10/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-8834410-26        07/10/2026     07/10/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+HVAC installation, service, and repair at Fresno Gardens. Additional Insured status applies to
+General Liability per attached endorsement. No waiver of subrogation or primary/non-contributory
+endorsement has been requested or issued for this certificate holder.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Fresno Gardens
+1010 Blackstone Ave, Fresno, CA 93701
+
+[X] ADDITIONAL INSURED    [ ] WAIVER OF SUBROGATION    [ ] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ R. Patel

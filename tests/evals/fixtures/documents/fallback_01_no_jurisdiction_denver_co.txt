@@ -1,0 +1,37 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 07/01/2026
+
+PRODUCER: Rocky Mountain Insurance Group, 1200 17th St, Denver, CO 80202
+CONTACT: (303) 555-0421   EMAIL: certs@rmig.test
+
+INSURED: Rocky Mountain Plumbing
+         800 Larimer St, Denver, CO 80204
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Front Range Mutual Insurance              NAIC #: 60441
+
+CERTIFICATE NUMBER: CL-2026-20871
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-9981122-26        07/01/2026     07/01/2027   EACH OCCURRENCE        $1,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $2,000,000
+
+AUTOMOBILE LIABILITY             A   AL-9981133-26        07/01/2026     07/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-9981144-26        07/01/2026     07/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Plumbing services at Mile High Flats. Additional Insured, Waiver of Subrogation, and Primary &
+Non-Contributory status apply to General Liability per attached endorsements. Coverage is
+otherwise complete and well-formed — this certificate should never be scored on extraction
+quality; it exists to test the retrieval-fallback path when NO compliance_requirements rows
+exist for a jurisdiction (Colorado).
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Mile High Flats
+900 16th St, Denver, CO 80202
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ K. Sullivan

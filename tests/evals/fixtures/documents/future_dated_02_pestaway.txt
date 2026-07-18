@@ -1,0 +1,37 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 07/15/2026
+
+PRODUCER: Bayview Insurance Brokers, 500 Harbor Blvd, Oakland, CA 94607
+CONTACT: (510) 555-0134   EMAIL: certs@bayviewinsurance.test
+
+INSURED: PestAway Solutions
+         55 Commerce Ct, Oakland, CA 94608
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Golden State Mutual Insurance Co.        NAIC #: 22345
+INSURER B: Pacific Coast Casualty & Surety          NAIC #: 55678
+
+CERTIFICATE NUMBER: CL-2026-99201
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-5512230-26        09/01/2026     09/01/2027   EACH OCCURRENCE        $1,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $2,000,000
+
+AUTOMOBILE LIABILITY             B   AL-5512241-26        09/01/2026     09/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-5512252-26        09/01/2026     09/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Pest control services at Oakland Terrace Apartments. This certificate reflects the vendor's
+UPCOMING policy term (binder issued early, effective 09/01/2026); the current in-force term
+expires separately and is not represented on this document. Additional Insured, Waiver of
+Subrogation, and Primary & Non-Contributory status apply to General Liability.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Oakland Terrace Apartments
+2100 Broadway, Oakland, CA 94612
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ M. Alvarez, CIC

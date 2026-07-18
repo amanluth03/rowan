@@ -1,0 +1,13 @@
+%PDF-CORRUPT-STREAM-SIMULATION%%%
+â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘ [OCR FAILURE: 0x00 0x00 0xFA 0x12 0x9C bytes unrecoverable] â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘
+
+qwe9 8asd f#@!! ---- lkjasdf ??? ####  1230981 zzzzzz
+[image region undecodable — scan skew 47deg, resolution 72dpi, contrast clipped]
+
+.......................................................................
+.......  (no recognizable text layer; raw glyph noise below)  .........
+.......................................................................
+
+xkcd992 ??!! zzzzz ####  asldkj oiwuer  0x0x0x0x  ---##---  4471829
+
+[END OF UNREADABLE SCAN — 1 PAGE]

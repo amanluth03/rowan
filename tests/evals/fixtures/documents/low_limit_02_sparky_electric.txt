@@ -1,0 +1,34 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 06/25/2026
+
+PRODUCER: Central Valley Insurance Partners, 900 Fulton Ave, Fresno, CA 93721
+CONTACT: (559) 555-0199   EMAIL: certs@cvinsurance.test
+
+INSURED: Sparky Electric
+         410 Blackstone Ave, Fresno, CA 93701
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Valley Trust Insurance                    NAIC #: 51290
+
+CERTIFICATE NUMBER: CL-2026-33871
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-1120984-26        07/01/2026     07/01/2027   EACH OCCURRENCE        $1,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $1,500,000
+
+AUTOMOBILE LIABILITY             A   AL-1120991-26        07/01/2026     07/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-1121002-26        07/01/2026     07/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Electrical services at Fresno Gardens. Additional Insured status applies to General Liability
+per attached endorsement CG 20 33.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Fresno Gardens
+1010 Blackstone Ave, Fresno, CA 93701
+
+[X] ADDITIONAL INSURED    [ ] WAIVER OF SUBROGATION    [ ] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ L. Fischer

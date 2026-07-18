@@ -1,0 +1,36 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 04/28/2026
+
+PRODUCER: Lakeview Insurance Agency, 12 Shoreline Dr, Oakland, CA 94612
+CONTACT: (510) 555-0212   EMAIL: certs@lakeviewinsurance.test
+
+INSURED: Topline Roofing Co.
+         600 Ridge Rd, Oakland, CA 94619
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Summit National Insurance                 NAIC #: 90211
+INSURER B: Coastal Surety Group                       NAIC #: 10938
+
+CERTIFICATE NUMBER: CL-2026-71190
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-8801221-26        05/01/2026     05/01/2027   EACH OCCURRENCE        $2,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $4,000,000
+
+AUTOMOBILE LIABILITY             B   AL-8801233-26        05/01/2026     05/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-8801244-26        05/01/2026     05/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Roof repair and replacement services at Lakeview Commons Condominiums. Certificate holder has
+requested additional insured and waiver of subrogation status; insurer has not yet issued the
+requested endorsements as of the date of this certificate.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Lakeview Commons Condominiums / Lakeview HOA
+44 Lakeshore Ave, Oakland, CA 94612
+
+[ ] ADDITIONAL INSURED    [ ] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ T. Okafor

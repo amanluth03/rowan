@@ -1,0 +1,36 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 06/10/2026
+
+PRODUCER: East Bay Underwriters, 88 Grand Ave, Oakland, CA 94610
+CONTACT: (510) 555-0177   EMAIL: certs@eastbayuw.test
+
+INSURED: Bay Area Electric Co.
+         245 Telegraph Ave, Oakland, CA 94612
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Continental Trust Insurance Group         NAIC #: 33221
+INSURER B: Harbor Point Casualty                     NAIC #: 44119
+
+CERTIFICATE NUMBER: CL-2026-77102
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+COMMERCIAL GENERAL LIABILITY     A   GL-2210087-26        06/15/2026     06/15/2027   EACH OCCURRENCE        $1,500,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $2,000,000
+
+AUTOMOBILE LIABILITY             B   AL-3390212-26        06/15/2026     06/15/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-1187765-26        06/15/2026     06/15/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Electrical installation and repair services for all Rowan-managed properties in the East Bay
+portfolio. Additional Insured, Waiver of Subrogation, and Primary & Non-Contributory status
+apply to General Liability per attached endorsements.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Oakland Terrace Apartments
+2100 Broadway, Oakland, CA 94612
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ D. Nguyen

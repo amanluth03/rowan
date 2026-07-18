@@ -1,0 +1,41 @@
+ACORD CERTIFICATE OF LIABILITY INSURANCE                         DATE (MM/DD/YYYY): 06/28/2026
+THIS CERTIFICATE IS ISSUED AS A MATTER OF INFORMATION ONLY AND CONFERS NO RIGHTS UPON THE
+CERTIFICATE HOLDER. THIS CERTIFICATE DOES NOT AFFIRMATIVELY OR NEGATIVELY AMEND, EXTEND OR
+ALTER THE COVERAGE AFFORDED BY THE POLICIES BELOW.
+
+PRODUCER: Bayview Insurance Brokers, 500 Harbor Blvd, Oakland, CA 94607
+CONTACT: (510) 555-0134   EMAIL: certs@bayviewinsurance.test
+
+INSURED: Hernandez Plumbing & Rooter, Inc.
+         1420 San Pablo Ave, Oakland, CA 94612
+
+INSURER(S) AFFORDING COVERAGE:
+INSURER A: Golden State Mutual Insurance Co.        NAIC #: 22345
+INSURER B: Pacific Coast Casualty & Surety          NAIC #: 55678
+
+CERTIFICATE NUMBER: CL-2026-84421
+
+TYPE OF INSURANCE              INSR  POLICY NUMBER      POLICY EFF     POLICY EXP     LIMITS
+                                 LTR                      (MM/DD/YY)     (MM/DD/YY)
+COMMERCIAL GENERAL LIABILITY     A   GL-4471829-26        07/01/2026     07/01/2027   EACH OCCURRENCE        $1,000,000
+  [X] OCCUR                                                                          GENERAL AGGREGATE       $2,000,000
+
+AUTOMOBILE LIABILITY             B   AL-9012233-26        07/01/2026     07/01/2027   COMBINED SINGLE LIMIT  $1,000,000
+  [X] ANY AUTO
+
+WORKERS COMPENSATION             A   WC-5567211-26        07/01/2026     07/01/2027   [X] PER STATUTE
+AND EMPLOYERS' LIABILITY                                                              E.L. EACH ACCIDENT     $1,000,000
+
+DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES
+Plumbing repair and maintenance services at all managed properties. Additional Insured status
+applies to General Liability per endorsement CG 20 33. Waiver of Subrogation applies per
+endorsement CG 24 04. Coverage is Primary and Non-Contributory per endorsement CG 20 01 as
+respects work performed for certificate holder.
+
+CERTIFICATE HOLDER:
+Rowan Property Management obo Oakland Terrace Apartments
+2100 Broadway, Oakland, CA 94612
+
+[X] ADDITIONAL INSURED    [X] WAIVER OF SUBROGATION    [X] PRIMARY & NON-CONTRIBUTORY
+
+AUTHORIZED REPRESENTATIVE: /s/ M. Alvarez, CIC
