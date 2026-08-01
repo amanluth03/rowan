@@ -52,6 +52,32 @@ class Settings(BaseSettings):
     claude_explain_model: str = "claude-haiku-4-5"
     claude_timeout_seconds: float = 60.0
 
+    # --- Supabase Auth (Epic 1) ---
+    # Base project URL, e.g. https://abcdefgh.supabase.co. Empty by default
+    # -> verify_supabase_jwt refuses to run (fails closed) rather than
+    # accepting unverifiable tokens.
+    supabase_url: str = ""
+    # Overridable so tests can point at an in-process fake JWKS; in
+    # production it is derived from supabase_url.
+    supabase_jwks_url: str = ""
+    supabase_jwt_audience: str = "authenticated"
+    # # ASSUMPTION: asymmetric (RS256/ES256) signing keys, NOT the legacy
+    # shared HS256 secret. A symmetric secret sits in backend env and can
+    # forge a token for ANY user in ANY org if it leaks; an asymmetric
+    # public key cannot. Confirm the provisioned project's signing mode
+    # before go-live.
+    supabase_jwks_cache_seconds: int = 300
+
+    @property
+    def resolved_jwks_url(self) -> str:
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+
+    @property
+    def resolved_jwt_issuer(self) -> str:
+        return f"{self.supabase_url.rstrip('/')}/auth/v1"
+
     # --- Internal routes (scheduler trigger) ---
     # # ASSUMPTION: static bearer token placeholder auth for /internal/*
     # routes pending real cron-caller integration (e.g. Vercel Cron secret
