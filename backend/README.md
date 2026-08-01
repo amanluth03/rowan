@@ -405,6 +405,43 @@ now fixed:
 
 ## Known gaps / still open
 
+### Epic 1 (Accounts & Running Live) — auth
+
+- **No Supabase project is provisioned.** Every test runs against an
+  in-process fake JWKS (`tests/jwt_fixtures.py`); nothing has been exercised
+  end to end against a real tenant. **Confirm the project issues asymmetric
+  (RS256/ES256) tokens** — a shared HS256 secret sitting in backend env would
+  let a leak forge any identity for any org.
+- **Invitation lifecycle is not traced.** No `agent_events` rows for
+  invitation created / accepted / revoked. CLAUDE.md's observability rule
+  requires every human intervention to be traced, and team-membership changes
+  are the highest-consequence ones in this epic. Should close before customer
+  launch.
+- **A mailer failure during invite creation orphans the row.** The
+  invitation commits before `send_transactional` runs, so a transient Resend
+  failure — or engaging the global kill switch — returns 500 with the row
+  persisted, and `ux_invitations_pending_email` then 409s every retry for the
+  token's 7-day lifetime with no id returned for the owner to revoke.
+- **`email_verified` is not asserted** on the JWT claim, and invite
+  acceptance binds on email. Not exploitable today (the token is the real
+  gate), but it becomes load-bearing the moment anything else keys off
+  `claims.email`.
+- **`runs.reply_token` is plaintext** while `invitations.token_hash` is
+  hashed. Inconsistent; out of scope for this epic.
+- **In-process rate limiter keyed on `request.client.host`** with no
+  trusted-proxy handling — behind a load balancer every caller collapses into
+  one bucket, making the cap a global throttle rather than per-client.
+- **No ownership transfer.** An org whose sole owner loses access has no
+  recovery path. Session lifetimes use Supabase defaults, uncalibrated.
+- **The seeded demo org (`0009_seed.sql`) is unreachable through the UI.** A
+  `users` row needs a real Supabase `auth_user_id`, which only exists once a
+  human signs up — a static seed would invent one and produce a row no login
+  could reach. The demo now starts at `/signup`, which exercises the real
+  customer path. DB tests and the eval harness are unaffected; they construct
+  orgs directly.
+
+### Pre-existing
+
 - **`runs.llm_call_count` is modeled as a single run-level counter**, but
   ADR 0002's `MAX_LLM_PER_DOC` budget is per-document. Resolved by resetting
   the counter to 0 whenever a NEW `coi_document_id` enters `parsing` (see

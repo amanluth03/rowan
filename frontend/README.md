@@ -12,17 +12,41 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Requires the backend running (`backend/README.md`'s quickstart) for anything beyond static rendering — this app has no mock-data fallback anymore; all reads/writes go through the real API.
 
-## Auth stub — READ THIS BEFORE deploying or extending this app
+## Authentication
 
-This app is wired to the backend via a **development-only auth stub**, not real authentication. `src/lib/api/config.ts::getOrgId()` resolves the organization for every request from a single env var (`ROWAN_ORG_ID`), sent server-side as an `X-Rowan-Org-Id` header (`src/lib/api/client.ts`). There is no per-user login, no session, and no verification of who is making a request — only *which org* they act as, matching the identical stub on the backend side (`backend/README.md`'s "Org-scoping auth stub" section, `backend/app/api/deps.py::get_organization_id`).
+Real Supabase Auth. The dev-only `getOrgId()` / `X-Rowan-Org-Id` stub that used to live here is **deleted, with no fallback** — a fallback would be a bypass.
 
-This is deliberately centralized to one function so that wiring real auth (Supabase session → verified org) later is a one-function swap, not a search-and-replace across every Server Action. **Do not deploy this app publicly without replacing `getOrgId()` with real session-derived auth first** — anyone who can reach a public deployment can act as the configured org.
+**This app never names an organization.** It forwards the user's Supabase access token as `Authorization: Bearer`, and the backend derives the org from the verified JWT (`backend/app/api/deps.py::get_principal`). That is the point: a client-supplied tenant id is now structurally impossible rather than merely discouraged.
+
+| File | Role |
+|---|---|
+| `src/lib/supabase/server.ts` | Cookie-backed server client. Server Components / Actions / Route Handlers only. |
+| `src/lib/supabase/browser.ts` | Browser client — used only by the login, signup, and accept-invite forms, which must call `signUp` / `signInWithPassword` directly. |
+| `src/lib/auth/session.ts` | `getSession()` / `requireSession()`. Calls `supabase.auth.getUser()` to re-validate against the auth server — trusting the cookie alone is forgeable. |
+| `src/proxy.ts` | Route guard. Next 16 renamed the `middleware` file convention to `proxy`. |
+| `src/lib/api/client.ts` | Attaches the bearer token; fails closed with `ApiError(401)` if there is no session. |
+
+**The route guard is a UX convenience, not the security boundary.** The backend verifies every request independently and returns 403/404 regardless of what this app renders. The same applies to role-aware UI: hiding an owner-only button is cosmetic, never a permission.
+
+### Environment
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+ROWAN_API_BASE=http://localhost:8000
+```
+
+Both `NEXT_PUBLIC_*` values are **public by design** — the anon key is a client-side identifier constrained by Supabase policy, not a secret. **Never put a service-role key in this app**, and never in a `NEXT_PUBLIC_` variable.
+
+> **Not yet verified end to end.** No Supabase project has been provisioned, so signup, login, and invite acceptance have never actually run. This builds clean and is unit-tested against a mocked session — that is not the same as working. With the env vars empty, `proxy.ts` currently 500s on every route.
 
 ## Architecture notes
 
 - `src/app/actions.ts` — Server Actions, the Interface→Orchestration command transport (ADR 0003). Calls the real backend via `src/lib/api/client.ts`.
 - `src/lib/api/read-models.ts` — assembles the four read-model DTOs (`RunTraceDTO`, `ActivityFeedItemDTO`, `VendorStatusDTO`, `ReviewQueueItemDTO`) from backend responses.
-- `src/app/api/documents/[documentId]/route.ts` — proxies the backend's hardened document-download route, attaching the server-side org header the browser can't be trusted to send. Validates `documentId` against the UUID shape before forwarding (closes a path-traversal/confused-deputy risk found at security review).
+- `src/app/api/documents/[documentId]/route.ts` — proxies the backend's hardened document-download route, attaching the session's bearer token server-side. Validates `documentId` against the UUID shape before forwarding (closes a path-traversal/confused-deputy risk found at security review).
+- `src/app/(auth)/` — login, signup, and accept-invite screens. Outside the app shell: no nav, no sidebar.
+- `src/app/(app)/settings/team/` — owner-only. Invite an assistant, list pending invitations, revoke.
 - `src/lib/mock/` — retained for local component development/tests; no longer in the live request path.
 
 See the repo root `CLAUDE.md` and `docs/adr/` for the full system design.

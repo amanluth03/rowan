@@ -310,7 +310,7 @@ pytest
 Stated plainly, because a compliance product that overstates its own completeness is the wrong product.
 
 - **No Supabase project is provisioned yet.** The backend verifies JWTs against a JWKS endpoint and every test runs against an in-process fake, but nothing has been exercised end to end against a real Supabase tenant. Confirm the project issues **asymmetric** (RS256/ES256) tokens — a shared HS256 secret in backend env would let a leak forge any identity.
-- **The frontend has not been migrated to bearer-token auth.** It still sends the removed `X-Rowan-Org-Id` header and will 401 against the current backend.
+- **The frontend auth flow is built but unverified.** Login, signup, accept-invite, the user menu, and team settings all typecheck, lint, build, and pass unit tests against a *mocked* session — no one has ever actually signed in. "Builds clean" and "works" are different claims, and only the first is currently true. With the Supabase env vars empty, `src/proxy.ts` 500s on every route, so a fresh clone gets a broken app rather than a clear "not configured" message.
 - **Invitation lifecycle events are not written to `agent_events`.** Team-membership changes are the highest-consequence human interventions in the system and should be traced before this ships.
 - **A mailer failure during invite creation leaves an orphaned row.** The invitation commits before the email sends, so a transient failure — or engaging the global kill switch — blocks retries for the invite's 7-day lifetime.
 - **Supabase Storage is not wired.** `app/storage.py`'s Protocol is the seam; the local filesystem implementation is dev-only.

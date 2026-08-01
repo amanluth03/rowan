@@ -8,9 +8,20 @@ create table organizations (
     created_at timestamptz not null default now()
 );
 
--- # ASSUMPTION: single user per org in v1 (multi-user orgs are a non-goal
--- per CLAUDE.md). users still exists so escalations have a target and RLS
--- can key on auth.uid() via auth_user_id.
+-- Users belong to exactly one organization. Two roles: `owner` (full access)
+-- and `assistant` (reads everything, operates the renewal loop, but cannot
+-- change requirements, approve/reject a COI, or manage the team).
+--
+-- This comment previously read "# ASSUMPTION: single user per org in v1
+-- (multi-user orgs are a non-goal per CLAUDE.md)". Epic 1 (Accounts &
+-- Running Live) deliberately reversed that non-goal — see
+-- docs/adr/0007-authentication-and-authorization.md. `auth_user_id` maps to
+-- the Supabase `auth.users` id and is UNIQUE, which is also what makes
+-- double-signup a 409 rather than requiring an RLS-defeating prior SELECT.
+--
+-- NOTE: the `role` column's enum was renamed pm -> assistant in migration
+-- 0010. This file is applied history and is not rewritten; only this comment
+-- changed.
 create table users (
     id uuid primary key default uuid_generate_v7(),
     organization_id uuid not null references organizations(id),
