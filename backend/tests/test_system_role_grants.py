@@ -8,6 +8,7 @@ privilege genuinely lives in the narrow role and not the broad one.
 
 from __future__ import annotations
 
+import asyncpg
 import pytest
 
 from app.db import app_pool, system_conn
@@ -61,6 +62,15 @@ async def test_system_resolves_invitation_without_guc(seeded):
         )
     assert row is not None
     assert row["organization_id"] == seeded["org_id"]
+
+
+async def test_system_cannot_read_user_emails(seeded):
+    """users.email is deliberately NOT granted -- the JWT claim supplies it."""
+    async with system_conn() as conn:
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.fetchval(
+                "select email from users where auth_user_id = $1", seeded["auth_user_id"]
+            )
 
 
 async def test_app_role_cannot_resolve_principal_without_guc(seeded):

@@ -100,11 +100,19 @@ async def org_scoped_tx(organization_id: UUID) -> AsyncIterator[asyncpg.Connecti
     "sees zero rows", not "leaks other orgs" or "raises" — but it's still a
     correctness bug, not a security one, given `force row level security`).
     """
+    # Defence-in-depth: the GUC set below is the SOLE input to every
+    # tenant_isolation predicate in the database. The `organization_id: UUID`
+    # annotation above is documentation only -- Python does not enforce it --
+    # so a caller could otherwise hand this a plain str (or anything with a
+    # __str__) and have it flow straight into the GUC unchecked. Round-trip
+    # through UUID(...) so anything that isn't a real UUID raises here,
+    # before it ever reaches Postgres.
+    org_uuid = str(UUID(str(organization_id)))
     pool = app_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "select set_config('app.current_org', $1, true)", str(organization_id)
+                "select set_config('app.current_org', $1, true)", org_uuid
             )
             yield conn
 

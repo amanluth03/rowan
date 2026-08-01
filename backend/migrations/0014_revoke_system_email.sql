@@ -1,0 +1,22 @@
+-- 0014_revoke_system_email: revoke rowan_system's SELECT on users.email.
+--
+-- 0012_auth_grants.sql granted (id, organization_id, auth_user_id, role,
+-- email) on users to rowan_system for pre-GUC principal resolution
+-- (auth_user_id -> org). Security review found the email column
+-- unnecessary: the verified JWT that triggers principal resolution already
+-- carries the user's email as a claim, so the caller never needs to read it
+-- back from `users`. Granting it anyway meant rowan_system's
+-- system_resolve_principal policy (`using (true)`, i.e. no row filter)
+-- made every user's email address, across every org, readable by that
+-- role -- a cross-tenant PII exposure with no functional gain. Least
+-- privilege per CLAUDE.md: revoke it.
+--
+-- `invitations.email` is deliberately RETAINED (not touched by this
+-- migration). Invitation acceptance is itself a pre-GUC, cross-org lookup
+-- by token_hash with no prior JWT to supply the email -- the invitee's
+-- address must be read from the row to bind acceptance to the invited
+-- email. That grant has a genuine functional need this one does not.
+--
+-- 0012_auth_grants.sql is applied history and is not edited.
+
+revoke select (email) on users from rowan_system;
