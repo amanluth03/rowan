@@ -22,6 +22,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from app.models.enums import UserRole
 from app.policy.auth import InvalidTokenError, verify_supabase_jwt
+from app.policy.permissions import Command, is_permitted
 from app.policy.rate_limit import RateLimiter
 from app.retrieval.principal_repo import resolve_principal
 
@@ -93,6 +94,26 @@ async def get_organization_id(principal: Principal = Depends(get_principal)) -> 
     `Depends(get_organization_id)` and none of them changed.
     """
     return principal.organization_id
+
+
+def require_role(command: Command):
+    """Route dependency enforcing COMMAND_ROLES.
+
+    Returns 403 (not 404) on a role denial. This does NOT leak anything: the
+    caller is already authenticated INTO this org, so they know their own
+    org's resources exist. Cross-TENANT misses are the case that must be 404,
+    and RLS handles those by returning no rows.
+    """
+
+    async def _dependency(principal: Principal = Depends(get_principal)) -> Principal:
+        if not is_permitted(command, principal.role):
+            raise HTTPException(
+                status_code=403,
+                detail=f"This action requires the owner role (you are {principal.role.value}).",
+            )
+        return principal
+
+    return _dependency
 
 
 # # ASSUMPTION: same in-process limiter pattern as app/main.py's webhook
