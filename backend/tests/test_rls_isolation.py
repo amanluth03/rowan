@@ -70,9 +70,12 @@ async def test_invitations_are_invisible_across_orgs(admin_conn):
     await admin_conn.execute(
         """
         insert into invitations (id, organization_id, email, role, token_hash, expires_at)
-        values ($1,$2,'invitee@example.com','assistant','deadbeef', now() + interval '7 days')
+        values ($1,$2,'invitee@example.com','assistant',$3, now() + interval '7 days')
         """,
-        invite_id, org_a,
+        # token_hash is GLOBALLY unique, not per-org. A literal here collides
+        # with itself on the second run against a persistent DB -- exactly the
+        # trap backend/README.md's "Test isolation gotcha" section warns about.
+        invite_id, org_a, f"hash_{invite_id}",
     )
 
     async with org_scoped_tx(org_b) as conn:
