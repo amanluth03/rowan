@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     # public key cannot. Confirm the provisioned project's signing mode
     # before go-live.
     supabase_jwks_cache_seconds: int = 300
+    # Public base URL of the Next.js app, used to build invite accept links.
+    app_base_url: str = "http://localhost:3000"
 
     @property
     def resolved_jwks_url(self) -> str:

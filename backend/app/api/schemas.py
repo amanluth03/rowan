@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from pydantic.alias_generators import to_camel
 
 from app.models.enums import (
@@ -49,6 +49,26 @@ class BootstrapOrgRequest(CamelModel):
 
 
 class BootstrapOrgResponse(CamelModel):
+    organization_id: UUID
+    user_id: UUID
+
+
+class InviteUserRequest(CamelModel):
+    email: EmailStr
+
+
+class InvitationDTO(CamelModel):
+    id: UUID
+    email: str
+    role: str
+    expires_at: datetime
+
+
+class AcceptInviteRequest(CamelModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+class AcceptInviteResponse(CamelModel):
     organization_id: UUID
     user_id: UUID
 

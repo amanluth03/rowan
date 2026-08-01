@@ -29,15 +29,18 @@ from uuid import UUID
 
 import asyncpg
 
+from app.config import settings
 from app.db import org_scoped_tx
 from app.ids import uuid7
-from app.models.enums import EventSeverity, EventType, RunState, RunStatus
+from app.models.enums import EventSeverity, EventType, RunState, RunStatus, UserRole
 from app.models.tool_contracts import ToolContext
+from app.notifications.mailer import send_transactional
+from app.notifications.templates import render_invite_email
 from app.observability.events import write_event
 from app.orchestration.constants import RunConstants, resolve_constants
 from app.policy.actions import Action
 from app.policy.guardrails import PolicyDecision, check_action, check_budget, check_kill_switches
-from app.retrieval import entity_repo, run_repo
+from app.retrieval import entity_repo, invitation_repo, run_repo
 from app.retrieval.models import EscalationRow, OrganizationRow, RunRow, VendorCoverageRequirementRow, VendorRow
 from app.retrieval.requirements_retriever import RequirementsQuery, V1DeterministicRetriever
 from app.tools.base import budget_snapshot
@@ -1818,3 +1821,88 @@ async def bootstrap_organization(
         raise ValueError("this account is already provisioned to an organization") from e
 
     return organization_id, user_id
+
+
+async def invite_user(
+    organization_id: UUID,
+    inviter_user_id: UUID,
+    inviter_email: str,
+    email: str,
+    role: UserRole,
+) -> UUID:
+    """Create a pending invitation and email it. Returns the invitation id.
+
+    Takes plain values rather than a Principal: Principal is an
+    Interface-layer type (app/api/deps.py), and Orchestration must not
+    import from Interface (CLAUDE.md six-layer model, ADR 0003). The route
+    unpacks it.
+    """
+    invitation_id, raw_token = await invitation_repo.create_invitation(
+        organization_id=organization_id,
+        email=email,
+        role=role,
+        invited_by_user_id=inviter_user_id,
+    )
+
+    async with org_scoped_tx(organization_id) as conn:
+        org_name = await conn.fetchval(
+            "select name from organizations where id = $1", organization_id
+        )
+
+    accept_url = f"{settings.app_base_url.rstrip('/')}/accept-invite/{raw_token}"
+    subject, html, text = render_invite_email(
+        org_name=org_name or "your organization",
+        inviter_email=inviter_email,
+        accept_url=accept_url,
+    )
+    await send_transactional(
+        to=email, subject=subject, html=html, text=text,
+        idempotency_key=f"invite:{invitation_id}",
+    )
+    return invitation_id
+
+
+async def accept_invitation(
+    raw_token: str, auth_user_id: UUID, email: str
+) -> tuple[UUID, UUID]:
+    """Redeem an invitation. Returns (organization_id, user_id).
+
+    Single-use and email-bound. Raises ValueError with a DELIBERATELY
+    generic message for every rejection reason -- distinguishing "expired"
+    from "already used" from "wrong email" would let someone probe the
+    invitation space.
+    """
+    invitation = await invitation_repo.resolve_invitation_by_token(raw_token)
+    generic = "This invitation link is not valid. Ask for a new one."
+
+    if invitation is None or invitation.accepted_at is not None:
+        raise ValueError(generic)
+    if invitation.expires_at < datetime.now(timezone.utc):
+        raise ValueError(generic)
+    if invitation.email.lower() != email.lower():
+        raise ValueError(generic)
+
+    user_id = uuid7()
+    async with org_scoped_tx(invitation.organization_id) as conn:
+        # Re-check acceptance INSIDE the transaction and claim it
+        # atomically, so two concurrent redemptions cannot both win.
+        claimed = await conn.execute(
+            "update invitations set accepted_at = now() where id = $1 and accepted_at is null",
+            invitation.id,
+        )
+        if claimed == "UPDATE 0":
+            raise ValueError(generic)
+
+        try:
+            await conn.execute(
+                """
+                insert into users (id, organization_id, auth_user_id, email, role)
+                values ($1,$2,$3,$4,$5)
+                """,
+                user_id, invitation.organization_id, auth_user_id, email,
+                invitation.role.value,
+            )
+        except asyncpg.UniqueViolationError as e:
+            raise ValueError("this account already belongs to an organization") from e
+
+    return invitation.organization_id, user_id
