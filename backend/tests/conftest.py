@@ -99,9 +99,10 @@ async def org_and_vendor(admin_conn: asyncpg.Connection):
         """,
         vcr_id, org_id, vendor_id, requirement_id,
     )
+    owner_auth_user_id = uuid4()
     await admin_conn.execute(
         "insert into users (id, organization_id, auth_user_id, email, role) values ($1,$2,$3,$4,'owner')",
-        uuid7(), org_id, uuid4(), "pm@example.com",
+        uuid7(), org_id, owner_auth_user_id, "pm@example.com",
     )
 
     return {
@@ -110,6 +111,7 @@ async def org_and_vendor(admin_conn: asyncpg.Connection):
         "vendor_id": vendor_id,
         "requirement_id": requirement_id,
         "vendor_coverage_requirement_id": vcr_id,
+        "owner_auth_user_id": owner_auth_user_id,
     }
 
 
@@ -156,3 +158,63 @@ async def make_run(admin_conn: asyncpg.Connection, org_and_vendor):
         return run_id
 
     return _make
+
+
+@pytest.fixture(scope="session")
+def jwt_harness():
+    """One ephemeral keypair for the whole session -- generating RSA keys is
+    slow enough that per-test would be noticeable."""
+    from tests.jwt_fixtures import JwtHarness
+
+    return JwtHarness()
+
+
+@pytest.fixture(autouse=True)
+def _supabase_auth_configured(monkeypatch, jwt_harness):
+    """Point every test at the in-process JWKS. autouse so no test can
+    accidentally hit a real network endpoint."""
+    from app.config import settings
+    import app.policy.auth as auth_mod
+    from tests.jwt_fixtures import TEST_AUDIENCE
+
+    async def _fake_fetch() -> dict:
+        return jwt_harness.jwks_dict()
+
+    monkeypatch.setattr(auth_mod, "_fetch_jwks", _fake_fetch)
+    monkeypatch.setattr(settings, "supabase_url", "https://test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_jwt_audience", TEST_AUDIENCE)
+    auth_mod._jwks_cache = None
+    yield
+    auth_mod._jwks_cache = None
+
+
+@pytest.fixture
+def auth_headers(jwt_harness):
+    """Build an Authorization header for a given Supabase auth_user_id."""
+
+    def _headers(auth_user_id) -> dict:
+        return {"Authorization": f"Bearer {jwt_harness.mint(auth_user_id)}"}
+
+    return _headers
+
+
+@pytest_asyncio.fixture
+async def org_with_users(admin_conn, org_and_vendor):
+    """Adds an assistant alongside the owner that org_and_vendor already
+    creates, and surfaces both auth_user_ids for token minting."""
+    org_id = org_and_vendor["org_id"]
+
+    owner_auth_id = await admin_conn.fetchval(
+        "select auth_user_id from users where organization_id = $1 and role = 'owner'", org_id
+    )
+    assistant_auth_id = uuid4()
+    await admin_conn.execute(
+        "insert into users (id, organization_id, auth_user_id, email, role) "
+        "values ($1,$2,$3,$4,'assistant')",
+        uuid7(), org_id, assistant_auth_id, "assistant@example.com",
+    )
+    return {
+        **org_and_vendor,
+        "owner_auth_id": owner_auth_id,
+        "assistant_auth_id": assistant_auth_id,
+    }

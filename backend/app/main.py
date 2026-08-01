@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+from app.api.auth_routes import router as api_auth_router
 from app.api.commands import router as api_commands_router
 from app.api.reads import router as api_reads_router
 from app.config import settings
@@ -34,10 +35,12 @@ app = FastAPI(title="Rowan Vendor COI Renewal Agent — backend", lifespan=lifes
 
 # Interface-layer (layer 1) HTTP surface: the 9 ADR 0003 commands + the 4
 # read-model DTOs. See app/api/commands.py and app/api/reads.py — both are
-# rate-limited (app/api/deps.py) and org-scoped via the X-Rowan-Org-Id
-# dev-auth stub (see backend/README.md's Known gaps section).
+# rate-limited and org-scoped via a verified Supabase JWT
+# (app/api/deps.py::get_principal; see backend/README.md's "REST API"
+# section).
 app.include_router(api_commands_router)
 app.include_router(api_reads_router)
+app.include_router(api_auth_router)
 
 # security-reviewer finding (2026-07-18, blocking): the public webhook must
 # reject oversized bodies and excessive request rates BEFORE doing any

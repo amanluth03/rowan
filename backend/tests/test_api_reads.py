@@ -10,6 +10,7 @@ dedupe uses, which is NOT what a read/dispatch path should reuse).
 from __future__ import annotations
 
 from datetime import date
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -34,19 +35,22 @@ async def client():
         yield c
 
 
-def _headers(org_id) -> dict:
-    return {"X-Rowan-Org-Id": str(org_id)}
+def _headers(jwt_harness, auth_user_id) -> dict:
+    return {"Authorization": f"Bearer {jwt_harness.mint(auth_user_id)}"}
 
 
 class TestVendorStatus:
-    async def test_list_and_get_vendor(self, client, org_and_vendor):
-        resp = await client.get("/api/v1/vendors", headers=_headers(org_and_vendor["org_id"]))
+    async def test_list_and_get_vendor(self, client, org_and_vendor, jwt_harness):
+        resp = await client.get(
+            "/api/v1/vendors", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"])
+        )
         assert resp.status_code == 200
         vendors = resp.json()
         assert any(v["id"] == str(org_and_vendor["vendor_id"]) for v in vendors)
 
         resp = await client.get(
-            f"/api/v1/vendors/{org_and_vendor['vendor_id']}", headers=_headers(org_and_vendor["org_id"])
+            f"/api/v1/vendors/{org_and_vendor['vendor_id']}",
+            headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]),
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -57,33 +61,50 @@ class TestVendorStatus:
             "compliant", "expiring_soon", "needs_review", "escalated", "no_requirements", "pending",
         }
 
-    async def test_get_unknown_vendor_404(self, client, org_and_vendor):
-        resp = await client.get(f"/api/v1/vendors/{uuid7()}", headers=_headers(org_and_vendor["org_id"]))
+    async def test_get_unknown_vendor_404(self, client, org_and_vendor, jwt_harness):
+        resp = await client.get(
+            f"/api/v1/vendors/{uuid7()}", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"])
+        )
         assert resp.status_code == 404
 
-    async def test_vendor_from_other_org_is_404(self, client, org_and_vendor):
-        other_org = uuid7()
-        resp = await client.get(f"/api/v1/vendors/{org_and_vendor['vendor_id']}", headers=_headers(other_org))
+    async def test_vendor_from_other_org_is_404(self, client, org_and_vendor, jwt_harness, admin_conn):
+        # A real, provisioned user -- just in a DIFFERENT org than the vendor.
+        other_org_id = uuid7()
+        other_auth_user_id = uuid4()
+        await admin_conn.execute(
+            "insert into organizations (id, name, agent_enabled) values ($1, $2, true)",
+            other_org_id, f"Other Org {other_org_id}",
+        )
+        await admin_conn.execute(
+            "insert into users (id, organization_id, auth_user_id, email, role) values ($1,$2,$3,$4,'owner')",
+            uuid7(), other_org_id, other_auth_user_id, "other-pm@example.com",
+        )
+        resp = await client.get(
+            f"/api/v1/vendors/{org_and_vendor['vendor_id']}",
+            headers=_headers(jwt_harness, other_auth_user_id),
+        )
         assert resp.status_code == 404
 
-    async def test_no_requirements_status_before_set_requirements(self, client, org_and_vendor):
+    async def test_no_requirements_status_before_set_requirements(self, client, org_and_vendor, jwt_harness):
         vendor, run = await add_vendor(
             org_and_vendor["org_id"], name="Bare Vendor", primary_email="bare@x.example.com",
             vendor_role="cleaner", primary_property_id=None, notes=None, due_date=None,
         )
-        resp = await client.get(f"/api/v1/vendors/{vendor.id}", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(
+            f"/api/v1/vendors/{vendor.id}", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"])
+        )
         assert resp.status_code == 200
         assert resp.json()["complianceStatus"] == "no_requirements"
 
 
 class TestRunTrace:
-    async def test_trace_includes_transition_events(self, client, org_and_vendor, make_run):
+    async def test_trace_includes_transition_events(self, client, org_and_vendor, jwt_harness, make_run):
         from app.orchestration.runner import send_first_outreach
 
         run_id = await make_run(state="renewal_due_soon", due_date=date.today())
         await send_first_outreach(org_and_vendor["org_id"], run_id)
 
-        resp = await client.get(f"/api/v1/runs/{run_id}/trace", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(f"/api/v1/runs/{run_id}/trace", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         body = resp.json()
         assert body["runId"] == str(run_id)
@@ -93,19 +114,19 @@ class TestRunTrace:
         assert "run.renewal_due_soon_to_first_outreach_sent" in event_names
         assert "run.first_outreach_sent_to_awaiting_vendor_response" in event_names
 
-    async def test_unknown_run_404(self, client, org_and_vendor):
-        resp = await client.get(f"/api/v1/runs/{uuid7()}/trace", headers=_headers(org_and_vendor["org_id"]))
+    async def test_unknown_run_404(self, client, org_and_vendor, jwt_harness):
+        resp = await client.get(f"/api/v1/runs/{uuid7()}/trace", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 404
 
 
 class TestActivityFeed:
-    async def test_feed_surfaces_outreach_sent(self, client, org_and_vendor, make_run):
+    async def test_feed_surfaces_outreach_sent(self, client, org_and_vendor, jwt_harness, make_run):
         from app.orchestration.runner import send_first_outreach
 
         run_id = await make_run(state="renewal_due_soon", due_date=date.today())
         await send_first_outreach(org_and_vendor["org_id"], run_id)
 
-        resp = await client.get("/api/v1/activity-feed", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get("/api/v1/activity-feed", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         items = resp.json()
         matching = [i for i in items if i["runId"] == str(run_id)]
@@ -165,10 +186,10 @@ class TestReviewQueue:
             )
         return run_id, doc, validation, esc
 
-    async def test_review_queue_item_has_comparison_and_faithfulness(self, client, org_and_vendor, make_run):
+    async def test_review_queue_item_has_comparison_and_faithfulness(self, client, org_and_vendor, jwt_harness, make_run):
         run_id, doc, validation, esc = await self._make_failing_validation(org_and_vendor, make_run)
 
-        resp = await client.get("/api/v1/reviews", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get("/api/v1/reviews", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         items = resp.json()
         item = next(i for i in items if i["escalationId"] == str(esc.id))
@@ -182,12 +203,12 @@ class TestReviewQueue:
         assert line["required"]["sourceCitation"] == "test citation"
         assert item["document"]["url"] == f"/api/v1/documents/{doc.id}/download"
 
-        resp = await client.get(f"/api/v1/reviews/{esc.id}", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(f"/api/v1/reviews/{esc.id}", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         assert resp.json()["escalationId"] == str(esc.id)
 
     async def test_review_queue_finds_escalation_even_if_run_state_has_moved_on(
-        self, client, org_and_vendor, make_run
+        self, client, org_and_vendor, jwt_harness, make_run
     ):
         """The exact gap security-reviewer flagged: `escalate_to_pm`'s
         internal dedupe (`entity_repo.get_open_escalation`) keys on
@@ -211,17 +232,17 @@ class TestReviewQueue:
             )
 
         resp = await client.get(
-            "/api/v1/reviews", params={"kind": "needs_human_review"}, headers=_headers(org_and_vendor["org_id"])
+            "/api/v1/reviews", params={"kind": "needs_human_review"}, headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"])
         )
         assert resp.status_code == 200
         ids = [i["escalationId"] for i in resp.json()]
         assert str(esc.id) in ids
 
-        resp = await client.get(f"/api/v1/reviews/{esc.id}", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(f"/api/v1/reviews/{esc.id}", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         assert resp.json()["status"] == "open"
 
-    async def test_resolved_escalation_not_in_open_queue(self, client, org_and_vendor, make_run):
+    async def test_resolved_escalation_not_in_open_queue(self, client, org_and_vendor, jwt_harness, make_run):
         run_id = await make_run(state="needs_human_review", due_date=date.today())
         async with org_scoped_tx(org_and_vendor["org_id"]) as conn:
             esc = await entity_repo.insert_escalation(
@@ -231,13 +252,13 @@ class TestReviewQueue:
             )
             await entity_repo.resolve_escalation(conn, escalation_id=esc.id, resolution="approved", resolved_by=None)
 
-        resp = await client.get("/api/v1/reviews", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get("/api/v1/reviews", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         ids = [i["escalationId"] for i in resp.json()]
         assert str(esc.id) not in ids
 
 
 class TestDocumentDownload:
-    async def test_download_returns_bytes_with_sanitized_filename(self, client, org_and_vendor, make_run, tmp_path, monkeypatch):
+    async def test_download_returns_bytes_with_sanitized_filename(self, client, org_and_vendor, jwt_harness, make_run, tmp_path, monkeypatch):
         from app import storage as storage_module
 
         monkeypatch.setattr(storage_module, "_default_storage", storage_module.LocalFilesystemStorage(str(tmp_path)))
@@ -254,7 +275,7 @@ class TestDocumentDownload:
             )
         await storage_module.get_storage().write(storage_path=doc.storage_path, data=b"%PDF")
 
-        resp = await client.get(f"/api/v1/documents/{doc.id}/download", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(f"/api/v1/documents/{doc.id}/download", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
         assert resp.content == b"%PDF"
         # The real security property: no CR/LF reached the response (which
@@ -269,12 +290,12 @@ class TestDocumentDownload:
         assert "\r" not in ct and "\n" not in ct
         assert "x-evil" not in [k.lower() for k in resp.headers.keys()]
 
-    async def test_download_unknown_document_404(self, client, org_and_vendor):
-        resp = await client.get(f"/api/v1/documents/{uuid7()}/download", headers=_headers(org_and_vendor["org_id"]))
+    async def test_download_unknown_document_404(self, client, org_and_vendor, jwt_harness):
+        resp = await client.get(f"/api/v1/documents/{uuid7()}/download", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 404
 
     async def test_download_ignores_attacker_controlled_content_type(
-        self, client, org_and_vendor, make_run, tmp_path, monkeypatch
+        self, client, org_and_vendor, jwt_harness, make_run, tmp_path, monkeypatch
     ):
         """security-reviewer BLOCK (2026-07-18): coi_documents.content_type
         is the inbound webhook's attacker-supplied MIME string, stored
@@ -315,7 +336,7 @@ class TestDocumentDownload:
         polyglot = b"%PDF-1.4\n" + b"<script>alert(document.cookie)</script>\n" + b"0" * 50
         await storage_module.get_storage().write(storage_path=doc.storage_path, data=polyglot)
 
-        resp = await client.get(f"/api/v1/documents/{doc.id}/download", headers=_headers(org_and_vendor["org_id"]))
+        resp = await client.get(f"/api/v1/documents/{doc.id}/download", headers=_headers(jwt_harness, org_and_vendor["owner_auth_user_id"]))
         assert resp.status_code == 200
 
         content_type = resp.headers["content-type"]

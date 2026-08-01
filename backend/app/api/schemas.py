@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from pydantic.alias_generators import to_camel
 
 from app.models.enums import (
@@ -36,6 +36,41 @@ from app.models.enums import (
 
 class CamelModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+# ---------------------------------------------------------------------------
+# Auth: organization bootstrap (app/api/auth_routes.py)
+# ---------------------------------------------------------------------------
+
+
+class BootstrapOrgRequest(CamelModel):
+    organization_name: str = Field(min_length=1, max_length=200)
+    full_name: str | None = Field(default=None, max_length=200)
+
+
+class BootstrapOrgResponse(CamelModel):
+    organization_id: UUID
+    user_id: UUID
+
+
+class InviteUserRequest(CamelModel):
+    email: EmailStr
+
+
+class InvitationDTO(CamelModel):
+    id: UUID
+    email: str
+    role: str
+    expires_at: datetime
+
+
+class AcceptInviteRequest(CamelModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+class AcceptInviteResponse(CamelModel):
+    organization_id: UUID
+    user_id: UUID
 
 
 # ---------------------------------------------------------------------------
@@ -123,21 +158,25 @@ class RunActionResponse(CamelModel):
 
 
 class ApproveReviewRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field. Attribution for this consequential action comes
+    # ONLY from the authenticated principal (app.api.deps.get_principal) —
+    # never a client-supplied value. See app/api/commands.py::approve_review.
+    pass
 
 
 class RejectReviewRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
+    pass
 
 
 class RequestRevisionRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
     revision_reason: str | None = None
 
 
 class ResolveEscalationRequest(CamelModel):
     decision: Literal["resolved", "keep_chasing"]
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
 
 
 class ReviewActionResponse(CamelModel):

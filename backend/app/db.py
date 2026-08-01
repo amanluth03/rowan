@@ -14,9 +14,27 @@ Two connection pools, matching ADR 0001's RLS shape exactly:
   correctness must not depend on someone remembering the WHERE clause).
 
 - `rowan_system` pool: used ONLY for the scheduler's org-enumeration query
-  (`SELECT id FROM organizations WHERE agent_enabled`). Nothing else is
-  reachable through this pool — table-level GRANTs enforce that even if
-  application code tries.
+  (`SELECT id FROM organizations WHERE agent_enabled`) plus the narrow,
+  column-restricted pre-GUC lookups added in 0012_auth_grants.sql (resolving
+  a verified JWT's principal on `users`, and an invitation `token_hash` on
+  `invitations`). Nothing else is reachable through this pool — table-level
+  GRANTs enforce that even if application code tries.
+
+Every `tenant_isolation` policy's predicate (0008_rls.sql, amended by
+0013_rls_predicate_nullif.sql) wraps the GUC read as
+`nullif(current_setting('app.current_org', true), '')::uuid` rather than
+casting `current_setting(...)` directly. This matters because Postgres
+placeholder GUCs like `app.current_org` only return NULL from
+`current_setting(name, true)` if the session has NEVER touched that name —
+once `org_scoped_tx` below runs `set_config(..., true)` inside a
+transaction, the value reverts to `''` (not NULL) when that transaction
+ends, permanently, for the life of that physical (pooled) connection; even
+an explicit `RESET` does not bring it back to NULL. Casting `''` straight
+to `::uuid` raises instead of comparing against NULL. `nullif(..., '')`
+collapses `''` back to NULL before the cast, so the "GUC not set" case
+behaves identically whether this is a fresh connection or a reused one that
+previously ran `org_scoped_tx` for a different org — see
+0013_rls_predicate_nullif.sql for the full account.
 
 # ASSUMPTION: pool sizing (min/max) is a placeholder for v1 traffic (single
 demo org, low concurrency); revisit before real multi-tenant load.
@@ -75,16 +93,26 @@ async def org_scoped_tx(organization_id: UUID) -> AsyncIterator[asyncpg.Connecti
     Every retrieval/tool call that touches Postgres must go through this (or
     an equivalent that also sets the GUC) — never acquire a raw connection
     from app_pool() and query it directly, or RLS scoping silently no-ops
-    (current_setting returns NULL, tenant_isolation matches nothing, so the
-    failure mode is "sees zero rows", not "leaks other orgs" — but it's
-    still a correctness bug, not a security one, given `force row level
-    security`).
+    (current_setting(..., true), collapsed through nullif(..., '') in the
+    tenant_isolation predicate, reads as NULL whether the GUC was never set
+    on this connection or was set-and-reverted by a prior org_scoped_tx use,
+    so tenant_isolation matches nothing either way — the failure mode is
+    "sees zero rows", not "leaks other orgs" or "raises" — but it's still a
+    correctness bug, not a security one, given `force row level security`).
     """
+    # Defence-in-depth: the GUC set below is the SOLE input to every
+    # tenant_isolation predicate in the database. The `organization_id: UUID`
+    # annotation above is documentation only -- Python does not enforce it --
+    # so a caller could otherwise hand this a plain str (or anything with a
+    # __str__) and have it flow straight into the GUC unchecked. Round-trip
+    # through UUID(...) so anything that isn't a real UUID raises here,
+    # before it ever reaches Postgres.
+    org_uuid = str(UUID(str(organization_id)))
     pool = app_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "select set_config('app.current_org', $1, true)", str(organization_id)
+                "select set_config('app.current_org', $1, true)", org_uuid
             )
             yield conn
 
