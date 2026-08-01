@@ -405,7 +405,7 @@ now fixed:
 
 ## Known gaps / still open
 
-### Epic 1 (Accounts & Running Live) — auth
+### ROW-101 (Real login and accounts) — auth
 
 - **No Supabase project is provisioned.** Every test runs against an
   in-process fake JWKS (`tests/jwt_fixtures.py`); nothing has been exercised

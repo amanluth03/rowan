@@ -42,7 +42,7 @@ FastAPI (Python) + Supabase Postgres + Next.js on Vercel + Claude API for docume
 - **Partial renewals:** all-or-nothing validation. A COI is validated as one unit against every required coverage line. Any missing, stale, or failing line fails the whole validation and routes to `needs_human_review` — never partially filed.
 - **Multi-property COIs:** one requirement set per vendor, org-wide (not per-property). A vendor has a single set of required coverage minimums regardless of how many properties they service.
 - Both of these are v1 scoping calls made to keep the state machine and schema simple; if real-world usage proves them wrong, that's a v2 revisit, not a v1 blocker.
-- **Accounts and roles (Epic 1):** real Supabase-backed accounts. One organization per signup, with the signing-up user as its owner. Two roles:
+- **Accounts and roles (ROW-101):** real Supabase-backed accounts. One organization per signup, with the signing-up user as its owner. Two roles:
   - `owner` — everything.
   - `assistant` — reads everything in the org and operates the renewal loop (start/pause/resume a run, request a revision), but may NOT change the vendor roster or coverage requirements, approve or reject a COI, resolve an escalation, or manage the team.
 
@@ -113,7 +113,7 @@ Golden-document harness in CI, `tests/evals/`: 15–20 test COIs spanning clean 
 
 Payments, city portal integration, SMS, vendor portal logins, bulk import, OCR fallback, vector search, third-party observability/eval platforms.
 
-**Superseded:** `multi-user orgs` was listed here until Epic 1 (Accounts & Running Live), which deliberately reversed it — see Locked product decisions below and `docs/adr/0007-authentication-and-authorization.md`.
+**Superseded:** `multi-user orgs` was listed here until ROW-101 (Real login and accounts), which deliberately reversed it — see Locked product decisions below and `docs/adr/0007-authentication-and-authorization.md`.
 
 ## Assumptions
 
