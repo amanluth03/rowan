@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { API_BASE, getOrgId } from "@/lib/api/config";
+import { API_BASE } from "@/lib/api/config";
 import { isValidDocumentId } from "@/lib/api/document-id";
+import { getSession } from "@/lib/auth/session";
 
 /**
  * Proxies `GET /api/v1/documents/{documentId}/download` (backend's hardened
@@ -9,10 +10,10 @@ import { isValidDocumentId } from "@/lib/api/document-id";
  * actually load.
  *
  * Why this proxy exists at all: the backend's download route (a) lives on a
- * different origin/port than this app in dev, and (b) requires the
- * `X-Rowan-Org-Id` dev-auth-stub header -- a plain `<a href>` straight to the
+ * different origin/port than this app in dev, and (b) requires an
+ * `Authorization: Bearer` token -- a plain `<a href>` straight to the
  * backend can supply neither. This route runs server-side, so it can hold
- * the org header the same way `lib/api/client.ts` does, and streams the
+ * the session the same way `lib/api/client.ts` does, and streams the
  * response straight through.
  *
  * SECURITY (carries forward the watch-item from the prior chunk's review):
@@ -49,8 +50,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ doc
     return NextResponse.json({ detail: "invalid document id" }, { status: 400 });
   }
 
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ detail: "Not authenticated" }, { status: 401 });
+  }
+
   const upstream = await fetch(`${API_BASE}/api/v1/documents/${encodeURIComponent(documentId)}/download`, {
-    headers: { "X-Rowan-Org-Id": getOrgId() },
+    headers: { Authorization: `Bearer ${session.accessToken}` },
     cache: "no-store",
   });
 

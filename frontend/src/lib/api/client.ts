@@ -2,16 +2,20 @@
  * Thin fetch wrapper for every Interface -> Orchestration call this app
  * makes against the real backend (ADR 0003's 9 commands + 4 read-model
  * DTOs, see backend/README.md's "REST API" section). Centralizes: the base
- * URL, the `X-Rowan-Org-Id` dev-auth-stub header (server-resolved only, see
- * `config.ts` -- never client-supplied), JSON (de)serialization, and turning
- * a non-2xx response into a typed `ApiError` callers can branch on.
+ * URL, the `Authorization: Bearer` header (the user's real Supabase access
+ * token, from `lib/auth/session.ts::getSession()` -- the backend derives
+ * the organization from this verified token; the client never names one),
+ * JSON (de)serialization, and turning a non-2xx response into a typed
+ * `ApiError` callers can branch on.
  *
  * Every Server Action (`app/actions.ts`) and server-side data-fetcher
  * (`lib/api/read-models.ts`) goes through this, not a raw `fetch()` -- one
- * seam to update for retries/timeouts/real auth later.
+ * seam to update for retries/timeouts later.
  */
 
-import { API_BASE, getOrgId } from "./config";
+import { getSession } from "@/lib/auth/session";
+
+import { API_BASE } from "./config";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -31,10 +35,18 @@ interface ApiFetchInit {
 }
 
 export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
+  const session = await getSession();
+  if (!session) {
+    // Fail closed. Sending the request without credentials would produce a
+    // confusing 401 from the backend; surfacing it here lets callers
+    // redirect to /login with intent.
+    throw new ApiError(401, "Not authenticated");
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     method: init.method ?? "GET",
     headers: {
-      "X-Rowan-Org-Id": getOrgId(),
+      Authorization: `Bearer ${session.accessToken}`,
       ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

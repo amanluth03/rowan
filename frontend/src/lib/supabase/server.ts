@@ -1,7 +1,7 @@
 /**
  * Server-side Supabase client, backed by the Next.js cookie store.
  *
- * This is the replacement for `lib/api/config.ts`'s `getOrgId()` env-var
+ * This is the replacement for the frontend's old hardcoded-org-id dev-auth
  * stub. Where that read a hardcoded org id from the environment, this reads
  * a real session the user authenticated for.
  *

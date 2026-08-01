@@ -10,11 +10,12 @@
  * exported function keeps its original signature (command in, CommandResult
  * out), so no calling component changed.
  *
- * SECURITY: command shapes deliberately carry no `organizationId` -- it is
- * resolved server-side, in exactly one place (`lib/api/config.ts::getOrgId`),
- * matching the backend's own `X-Rowan-Org-Id` dev-auth-stub seam
- * (`app/api/deps.py::get_organization_id`). Never accept `organizationId`
- * from client input. All routes are rate-limited on the backend side
+ * SECURITY: command shapes deliberately carry no `organizationId` -- the
+ * frontend never names one. `lib/api/client.ts` forwards the caller's
+ * Supabase access token (`lib/auth/session.ts::getSession()`), and the
+ * backend resolves the org from that verified token
+ * (`app/api/deps.py::get_principal`). Never accept `organizationId` from
+ * client input. All routes are rate-limited on the backend side
  * (`app/api/deps.py::rate_limit`, 120 req/60s per client IP).
  *
  * Two real command-shape gaps found while wiring this up (flagged to tech

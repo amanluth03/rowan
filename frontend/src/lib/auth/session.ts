@@ -1,6 +1,6 @@
 /**
  * The single seam for "who is this request for" -- the direct replacement
- * for `lib/api/config.ts::getOrgId()`.
+ * for the frontend's old hardcoded-org-id dev-auth stub.
  *
  * Note what is deliberately absent: an organization id. The frontend never
  * names an org. It forwards an access token, and the BACKEND resolves which
