@@ -216,3 +216,39 @@ export interface PropertyOption {
 export async function getPropertyOptions(): Promise<PropertyOption[]> {
   return [];
 }
+
+// ---------------------------------------------------------------------------
+// MeDTO -- caller identity + role, backs the user menu and the owner-only
+// team-settings gate. Role-aware UI built from this is COSMETIC ONLY: the
+// backend's `require_role` (app/api/deps.py) is the real enforcement point
+// and returns 403 regardless of what this says. Hiding a button here is not
+// a permission -- it is a courtesy so the UI doesn't offer an action that
+// will just fail.
+// ---------------------------------------------------------------------------
+
+export interface MeDTO {
+  userId: string;
+  organizationId: string;
+  email: string;
+  role: "owner" | "assistant";
+}
+
+export async function getMe(): Promise<MeDTO> {
+  return apiFetch<MeDTO>("/api/v1/me");
+}
+
+// ---------------------------------------------------------------------------
+// InvitationDTO -- pending team invitations, owner-only per policy.py's
+// COMMAND_ROLES (invite_user / list_invitations / revoke_invitation).
+// ---------------------------------------------------------------------------
+
+export interface InvitationDTO {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+}
+
+export async function getPendingInvitations(): Promise<InvitationDTO[]> {
+  return apiFetch<InvitationDTO[]>("/api/v1/invitations");
+}

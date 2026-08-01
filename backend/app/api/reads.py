@@ -12,13 +12,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.api import read_models
-from app.api.deps import get_organization_id, rate_limit
-from app.api.schemas import ActivityFeedItemDTO, ReviewQueueItemDTO, RunTraceDTO, VendorStatusDTO
+from app.api.deps import Principal, get_organization_id, get_principal, rate_limit
+from app.api.schemas import ActivityFeedItemDTO, MeDTO, ReviewQueueItemDTO, RunTraceDTO, VendorStatusDTO
 from app.db import org_scoped_tx
 from app.retrieval import entity_repo
 from app.storage import get_storage
 
 router = APIRouter(prefix="/api/v1", tags=["reads"], dependencies=[Depends(rate_limit)])
+
+
+@router.get("/me", response_model=MeDTO)
+async def get_me(principal: Principal = Depends(get_principal)) -> MeDTO:
+    """The caller's own identity and role. Used by the UI to hide owner-only
+    actions -- cosmetically. Enforcement is server-side via require_role;
+    this endpoint exists so the UI does not offer buttons that will 403."""
+    return MeDTO(
+        user_id=principal.user_id,
+        organization_id=principal.organization_id,
+        email=principal.email,
+        role=principal.role.value,
+    )
 
 
 def _safe_content_disposition_filename(filename: str) -> str:

@@ -73,6 +73,19 @@ class AcceptInviteResponse(CamelModel):
     user_id: UUID
 
 
+class MeDTO(CamelModel):
+    """The caller's own identity and role -- backs the frontend's user menu
+    and the owner-only team-settings gate. Role-aware UI built from this is
+    COSMETIC ONLY; `require_role` (app/api/deps.py) is the real enforcement
+    point and returns 403 regardless of what this DTO says the UI should
+    show."""
+
+    user_id: UUID
+    organization_id: UUID
+    email: str
+    role: str
+
+
 # ---------------------------------------------------------------------------
 # Commands: AddVendor, SetRequirements
 # ---------------------------------------------------------------------------

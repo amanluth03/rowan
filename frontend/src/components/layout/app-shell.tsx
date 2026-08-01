@@ -1,6 +1,7 @@
 import { Circle } from "lucide-react";
 import { SidebarNav } from "./sidebar-nav";
-import { getReviewQueue } from "@/lib/api/read-models";
+import { UserMenu } from "@/components/auth/user-menu";
+import { getMe, getReviewQueue } from "@/lib/api/read-models";
 
 /**
  * # ASSUMPTION / GAP (flagged to tech lead / backend-engineer): there is no
@@ -19,7 +20,7 @@ const ORG_DISPLAY_NAME = process.env.ROWAN_ORG_NAME ?? "Rowan Demo Property Mana
 const AGENT_ENABLED = true;
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
-  const reviewQueue = await getReviewQueue();
+  const [reviewQueue, me] = await Promise.all([getReviewQueue(), getMe()]);
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-[1440px]">
@@ -31,15 +32,8 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             <Circle className={AGENT_ENABLED ? "size-2 fill-emerald-500 text-emerald-500" : "size-2 fill-rose-500 text-rose-500"} />
             {AGENT_ENABLED ? "Agent active" : "Agent disabled"}
           </div>
-          <div className="flex items-center gap-2 rounded-md border border-sidebar-border px-2 py-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-xs font-semibold">
-              DA
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-xs font-medium leading-tight">Dana Alvarez</p>
-              <p className="truncate text-[11px] text-muted-foreground leading-tight">{ORG_DISPLAY_NAME}</p>
-            </div>
-          </div>
+          <p className="truncate text-[11px] text-muted-foreground">{ORG_DISPLAY_NAME}</p>
+          <UserMenu email={me.email} role={me.role} />
         </div>
       </aside>
 

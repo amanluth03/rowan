@@ -39,6 +39,23 @@ def _headers(jwt_harness, auth_user_id) -> dict:
     return {"Authorization": f"Bearer {jwt_harness.mint(auth_user_id)}"}
 
 
+class TestMe:
+    async def test_me_returns_caller_identity_and_role(self, client, org_with_users, jwt_harness):
+        resp = await client.get("/api/v1/me", headers=_headers(jwt_harness, org_with_users["owner_auth_id"]))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["role"] == "owner"
+        assert body["organizationId"] == str(org_with_users["org_id"])
+
+        resp = await client.get("/api/v1/me", headers=_headers(jwt_harness, org_with_users["assistant_auth_id"]))
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "assistant"
+
+    async def test_me_requires_authentication(self, client):
+        resp = await client.get("/api/v1/me")
+        assert resp.status_code == 401
+
+
 class TestVendorStatus:
     async def test_list_and_get_vendor(self, client, org_and_vendor, jwt_harness):
         resp = await client.get(
