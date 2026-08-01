@@ -120,7 +120,7 @@ class ToolInvocationStatus(str, Enum):
 
 class UserRole(str, Enum):
     owner = "owner"
-    pm = "pm"
+    assistant = "assistant"
 
 
 class VendorStatus(str, Enum):
