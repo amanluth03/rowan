@@ -1160,6 +1160,24 @@ async def complete_filing(
 async def _pm_email(ctx: RunContext) -> str:
     async with org_scoped_tx(ctx.org.id) as conn:
         email = await entity_repo.get_primary_user_email(conn, ctx.org.id)
+        if email is None:
+            # No owner row to notify. Falling back to FROM_ADDRESS_DEFAULT
+            # below means the "you're covered" handled-notice is a
+            # consequential message per CLAUDE.md's guardrails section
+            # ("never silently") that would otherwise vanish to a
+            # placeholder address nobody reads. Mirror escalate_to_pm.py's
+            # no-owner guardrail trip so this is visible in the trace
+            # instead of a silent misroute.
+            await write_event(
+                conn,
+                organization_id=ctx.org.id,
+                run_id=ctx.run.id,
+                vendor_id=ctx.vendor.id,
+                event_type=EventType.guardrail_trip,
+                name="orchestration.notify_pm_handled.no_owner_to_notify",
+                severity=EventSeverity.error,
+                payload={"organization_id": str(ctx.org.id)},
+            )
     return email or FROM_ADDRESS_DEFAULT
 
 

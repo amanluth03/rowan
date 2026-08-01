@@ -49,13 +49,20 @@ async def get_organization(conn: asyncpg.Connection, organization_id: UUID) -> O
 
 
 async def get_primary_user_email(conn: asyncpg.Connection, organization_id: UUID) -> str | None:
-    """# ASSUMPTION: single user per org in v1 (ADR 0001) means "the PM to
-    notify" is unambiguous — the org's first/only user row. Ordered by
-    created_at so behavior is deterministic if this assumption is ever
-    violated before the schema is revisited.
+    """The org's owner -- the person escalations and 'handled' notices go to.
+
+    Filters on role rather than ordering by created_at. Pre-Epic-1 this
+    picked the oldest user, which was unambiguous when orgs held exactly one
+    user; with assistants in the org that would route Dana's escalations to
+    her assistant whenever the assistant row happened to be older.
+
+    # ASSUMPTION: exactly one owner per org in v1. Ownership transfer and
+    # multiple owners are not modeled yet; if a second owner ever exists,
+    # this returns the earliest deterministically rather than failing.
     """
     row = await conn.fetchrow(
-        "select email from users where organization_id = $1 order by created_at asc limit 1",
+        "select email from users where organization_id = $1 and role = 'owner' "
+        "order by created_at asc limit 1",
         organization_id,
     )
     return row["email"] if row else None

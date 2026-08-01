@@ -109,6 +109,22 @@ async def escalate_to_pm(
             ),
         )
         events.extend(notice.events)
+    else:
+        # No owner row to notify (org has no owner -- see
+        # entity_repo.get_primary_user_email's ASSUMPTION). This escalation
+        # is otherwise fully recorded (the upsert above), but nobody gets
+        # told, which is exactly the silent-failure mode CLAUDE.md's
+        # guardrails section forbids for consequential actions. Surface it
+        # as its own guardrail trip rather than letting it pass unnoticed.
+        events.append(
+            PendingEvent(
+                event_type=EventType.guardrail_trip,
+                name="escalate_to_pm.no_owner_to_notify",
+                severity=EventSeverity.error,
+                tool_name=TOOL_NAME,
+                payload={"organization_id": str(context.organization_id)},
+            )
+        )
 
     return ToolOutput(
         status=ToolStatus.ok,
