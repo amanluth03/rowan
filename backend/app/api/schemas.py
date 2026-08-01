@@ -123,21 +123,25 @@ class RunActionResponse(CamelModel):
 
 
 class ApproveReviewRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field. Attribution for this consequential action comes
+    # ONLY from the authenticated principal (app.api.deps.get_principal) —
+    # never a client-supplied value. See app/api/commands.py::approve_review.
+    pass
 
 
 class RejectReviewRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
+    pass
 
 
 class RequestRevisionRequest(CamelModel):
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
     revision_reason: str | None = None
 
 
 class ResolveEscalationRequest(CamelModel):
     decision: Literal["resolved", "keep_chasing"]
-    resolved_by: UUID | None = None
+    # No `resolved_by` field — see ApproveReviewRequest.
 
 
 class ReviewActionResponse(CamelModel):

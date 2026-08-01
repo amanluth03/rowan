@@ -17,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import read_models
-from app.api.deps import get_organization_id, rate_limit
+from app.api.deps import Principal, get_organization_id, get_principal, rate_limit
 from app.api.schemas import (
     AddVendorRequest,
     AddVendorResponse,
@@ -136,8 +136,12 @@ async def approve_review(
     escalation_id: UUID,
     body: ApproveReviewRequest = ApproveReviewRequest(),
     organization_id: UUID = Depends(get_organization_id),
+    principal: Principal = Depends(get_principal),
 ) -> ReviewActionResponse:
-    run = await runner.approve_review(organization_id, escalation_id, resolved_by=body.resolved_by)
+    # The approver is the authenticated principal, never a client-supplied
+    # value -- approving a COI is a consequential action (CLAUDE.md) and its
+    # attribution must not be forgeable.
+    run = await runner.approve_review(organization_id, escalation_id, resolved_by=principal.user_id)
     if run is None:
         raise HTTPException(status_code=409, detail="no open needs_human_review escalation with that id")
     return ReviewActionResponse(escalation_id=escalation_id, run_id=run.id, run_state=run.state)
@@ -148,8 +152,11 @@ async def reject_review(
     escalation_id: UUID,
     body: RejectReviewRequest = RejectReviewRequest(),
     organization_id: UUID = Depends(get_organization_id),
+    principal: Principal = Depends(get_principal),
 ) -> ReviewActionResponse:
-    run = await runner.reject_review(organization_id, escalation_id, resolved_by=body.resolved_by)
+    # The approver is the authenticated principal, never a client-supplied
+    # value -- see approve_review above.
+    run = await runner.reject_review(organization_id, escalation_id, resolved_by=principal.user_id)
     if run is None:
         raise HTTPException(status_code=409, detail="no open needs_human_review escalation with that id")
     return ReviewActionResponse(escalation_id=escalation_id, run_id=run.id, run_state=run.state)
@@ -160,9 +167,12 @@ async def request_revision(
     escalation_id: UUID,
     body: RequestRevisionRequest = RequestRevisionRequest(),
     organization_id: UUID = Depends(get_organization_id),
+    principal: Principal = Depends(get_principal),
 ) -> ReviewActionResponse:
+    # The approver is the authenticated principal, never a client-supplied
+    # value -- see approve_review above.
     run = await runner.request_revision(
-        organization_id, escalation_id, resolved_by=body.resolved_by, revision_reason=body.revision_reason
+        organization_id, escalation_id, resolved_by=principal.user_id, revision_reason=body.revision_reason
     )
     if run is None:
         raise HTTPException(status_code=409, detail="no open needs_human_review escalation with that id")
@@ -179,9 +189,12 @@ async def resolve_escalation(
     escalation_id: UUID,
     body: ResolveEscalationRequest,
     organization_id: UUID = Depends(get_organization_id),
+    principal: Principal = Depends(get_principal),
 ) -> ReviewActionResponse:
+    # The approver is the authenticated principal, never a client-supplied
+    # value -- see approve_review above.
     run = await runner.resolve_escalation(
-        organization_id, escalation_id, decision=body.decision, resolved_by=body.resolved_by
+        organization_id, escalation_id, decision=body.decision, resolved_by=principal.user_id
     )
     if run is None:
         raise HTTPException(status_code=409, detail="no open escalated_to_pm escalation with that id")
