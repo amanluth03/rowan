@@ -1,52 +1,98 @@
-"""Interface-layer (layer 1) shared dependencies: org-scoping auth stub +
-rate limiting. Every route in app/api/ depends on `get_organization_id` for
-its `organization_id` — never a client-supplied body/query field — so wiring
-real Supabase auth later is a one-function change here, not a sweep across
-every route.
+"""Interface-layer (layer 1) shared dependencies: authentication,
+authorization, and rate limiting.
+
+Every route in app/api/ derives its `organization_id` from a VERIFIED
+Supabase JWT -- never from a client-supplied body, query, or header field.
+The dev-mode `X-Rowan-Org-Id` stub that used to live here is GONE, with no
+fallback: a fallback would be a bypass.
+
+Resolution order, all fail-closed:
+    Authorization: Bearer <jwt>
+      -> app.policy.auth.verify_supabase_jwt   (signature, iss, aud, exp)
+      -> app.retrieval.principal_repo.resolve_principal  (sub -> org + role)
+      -> Principal
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request
 
+from app.models.enums import UserRole
+from app.policy.auth import InvalidTokenError, verify_supabase_jwt
 from app.policy.rate_limit import RateLimiter
-
-# # ASSUMPTION (flagged prominently in backend/README.md's "Known gaps"):
-# real Supabase auth (verify a JWT, resolve `users.auth_user_id ->
-# organization_id`) is NOT wired in this pass — that's explicitly out of
-# scope for this build (see the task brief). This header is a CLEAR,
-# EXPLICITLY-NAMED dev-mode stub standing in for that resolution, not a
-# silent default: every command/read-model route derives `organization_id`
-# ONLY from this dependency, and the dependency REQUIRES the header (no
-# fallback to a fixed demo org) — a request with no header fails closed
-# (401), it never silently resolves to "whichever org happens to be first".
-# This is deliberately the same shape frontend's `actions.ts` docstring
-# flagged as a trap to avoid: never let a client-supplied value (here, an
-# unauthenticated header) be silently treated as ground truth without this
-# being obvious and load-bearing for reviewers. When real auth lands, only
-# this function's body changes (header lookup -> verified-JWT claim lookup);
-# no call site changes, because every route already goes through this one
-# seam.
-ORG_HEADER_NAME = "X-Rowan-Org-Id"
+from app.retrieval.principal_repo import resolve_principal
 
 
-async def get_organization_id(
-    x_rowan_org_id: str | None = Header(default=None, alias=ORG_HEADER_NAME),
-) -> UUID:
-    if not x_rowan_org_id:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                f"{ORG_HEADER_NAME} header required (dev-mode auth stub pending real "
-                f"Supabase auth — see backend/README.md's Known gaps section)"
-            ),
-        )
+@dataclass(frozen=True)
+class Principal:
+    """Who is making this request, and on whose behalf. Frozen so a handler
+    cannot mutate its own authorization mid-request."""
+
+    user_id: UUID
+    auth_user_id: UUID
+    organization_id: UUID
+    role: UserRole
+    # Sourced from the verified JWT claim, NOT from the users table --
+    # rowan_system is deliberately not granted users.email (see
+    # principal_repo.resolve_principal).
+    email: str
+
+
+def _unauthorized() -> HTTPException:
+    # One generic message for every failure mode. Distinguishing "bad
+    # signature" from "unknown user" tells an attacker which half of a
+    # forgery attempt succeeded.
+    return HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def get_principal(authorization: str | None = Header(default=None)) -> Principal:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise _unauthorized()
+
+    token = authorization[7:].strip()
+    if not token:
+        raise _unauthorized()
+
     try:
-        return UUID(x_rowan_org_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"{ORG_HEADER_NAME} must be a UUID") from e
+        claims = await verify_supabase_jwt(token)
+    except InvalidTokenError as e:
+        raise _unauthorized() from e
+
+    row = await resolve_principal(claims.sub)
+    if row is None:
+        # Authenticated with Supabase but not provisioned into a Rowan org
+        # (e.g. signed up but never completed bootstrap). Not an error the
+        # client can exploit; the signup flow handles it explicitly.
+        raise _unauthorized()
+
+    return Principal(
+        user_id=row.user_id,
+        auth_user_id=claims.sub,
+        organization_id=row.organization_id,
+        role=row.role,
+        # From the VERIFIED claim, not from the users table -- see
+        # resolve_principal's docstring on why rowan_system is not granted
+        # the email column.
+        email=claims.email or "",
+    )
+
+
+async def get_organization_id(principal: Principal = Depends(get_principal)) -> UUID:
+    """Kept deliberately, as a one-line derivative of get_principal.
+
+    The original stub's docstring promised that wiring real auth would be
+    "a one-function change here, not a sweep across every route." This
+    honors that: ~20 existing route signatures still say
+    `Depends(get_organization_id)` and none of them changed.
+    """
+    return principal.organization_id
 
 
 # # ASSUMPTION: same in-process limiter pattern as app/main.py's webhook
