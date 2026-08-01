@@ -1777,3 +1777,44 @@ async def resolve_escalation(
     return await resolve_escalated_to_pm(
         organization_id, esc.run_id, decision=decision, escalation_id=escalation_id, resolved_by=resolved_by
     )
+
+
+async def bootstrap_organization(
+    auth_user_id: UUID,
+    email: str,
+    full_name: str | None,
+    org_name: str,
+) -> tuple[UUID, UUID]:
+    """Create an organization and its first (owner) user, atomically.
+
+    The only write in Rowan that cannot be org-scoped on entry, because the
+    org does not exist yet. It still runs as rowan_app under normal RLS
+    rather than via any elevated path: we mint the organization id app-side
+    (ADR 0000: UUID v7 generated app-side) and open org_scoped_tx on THAT
+    id, so `app.current_org` already names the row being inserted and the
+    tenant_isolation WITH CHECK passes.
+
+    Double-signup is caught by users.auth_user_id's UNIQUE constraint, which
+    Postgres enforces regardless of RLS -- deliberately NOT by a prior
+    SELECT, which RLS would blank out anyway.
+    """
+    organization_id = uuid7()
+    user_id = uuid7()
+
+    try:
+        async with org_scoped_tx(organization_id) as conn:
+            await conn.execute(
+                "insert into organizations (id, name, agent_enabled) values ($1, $2, true)",
+                organization_id, org_name,
+            )
+            await conn.execute(
+                """
+                insert into users (id, organization_id, auth_user_id, email, full_name, role)
+                values ($1, $2, $3, $4, $5, 'owner')
+                """,
+                user_id, organization_id, auth_user_id, email, full_name,
+            )
+    except asyncpg.UniqueViolationError as e:
+        raise ValueError("this account is already provisioned to an organization") from e
+
+    return organization_id, user_id

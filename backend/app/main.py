@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+from app.api.auth_routes import router as api_auth_router
 from app.api.commands import router as api_commands_router
 from app.api.reads import router as api_reads_router
 from app.config import settings
@@ -39,6 +40,7 @@ app = FastAPI(title="Rowan Vendor COI Renewal Agent — backend", lifespan=lifes
 # section).
 app.include_router(api_commands_router)
 app.include_router(api_reads_router)
+app.include_router(api_auth_router)
 
 # security-reviewer finding (2026-07-18, blocking): the public webhook must
 # reject oversized bodies and excessive request rates BEFORE doing any

@@ -39,6 +39,21 @@ class CamelModel(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Auth: organization bootstrap (app/api/auth_routes.py)
+# ---------------------------------------------------------------------------
+
+
+class BootstrapOrgRequest(CamelModel):
+    organization_name: str = Field(min_length=1, max_length=200)
+    full_name: str | None = Field(default=None, max_length=200)
+
+
+class BootstrapOrgResponse(CamelModel):
+    organization_id: UUID
+    user_id: UUID
+
+
+# ---------------------------------------------------------------------------
 # Commands: AddVendor, SetRequirements
 # ---------------------------------------------------------------------------
 
