@@ -61,11 +61,10 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ## REST API (`app/api/`)
 
-Every route requires an `X-Rowan-Org-Id: <uuid>` header — **read the
-"Org-scoping auth stub" note immediately below before using or extending
-this API; it is not production auth.** All routes are rate-limited
-(`app/api/deps.py`, 120 req/60s per client IP, same in-process mechanism as
-the webhook's limiter).
+Every route requires an `Authorization: Bearer <supabase-jwt>` header — **read
+the "Authentication" note immediately below for how `organization_id` is
+resolved from it.** All routes are rate-limited (`app/api/deps.py`, 120
+req/60s per client IP, same in-process mechanism as the webhook's limiter).
 
 **Commands** (ADR 0003 "Interface -> Orchestration: typed commands only" —
 each validates its body with Pydantic, calls exactly one
@@ -108,25 +107,24 @@ Wire shapes are in `app/api/schemas.py`, camelCase over the wire
 "DTO shape notes for frontend-engineer" below for the handful of places this
 implementation's real data can't match that proposal exactly).
 
-### Org-scoping auth stub — READ THIS BEFORE using or extending `app/api/`
+### Authentication — `app/api/deps.py::get_principal`
 
-`app/api/deps.py::get_organization_id` derives `organization_id` **only**
-from a required `X-Rowan-Org-Id: <uuid>` header. This is a **placeholder for
-real Supabase auth** (verify a JWT, resolve `users.auth_user_id ->
-organization_id`), which is explicitly out of scope for this pass.
+`app/api/deps.py::get_principal` derives `organization_id` **only** from a
+required `Authorization: Bearer <jwt>` header: the token is verified against
+Supabase's JWKS (signature, `iss`, `aud`, `exp` — `app/policy/auth.py`),
+then its `sub` claim is resolved to a Rowan `Principal` (user, org, role) via
+`app/retrieval/principal_repo.py::resolve_principal`. `get_organization_id`
+is kept as a one-line derivative of `get_principal` so existing route
+signatures didn't need to change. Any failure in that chain (missing header,
+bad signature, unknown `sub`) is a generic 401 — deliberately
+undifferentiated, so a forgery attempt can't learn which stage failed.
 
-# ASSUMPTION: every route depends on this ONE function for org resolution —
-never a client-supplied body/query field, and the header is REQUIRED (no
-silent default org) — specifically so that (a) it fails closed (401) rather
-than silently resolving to "whichever org happens to be configured", and
-(b) wiring real auth later is a one-function change (swap the header lookup
-for a verified-JWT-claim lookup) with **zero call-site changes** across
-`app/api/commands.py` / `app/api/reads.py`. This is the same shape of trap
-flagged in the frontend's `actions.ts` docstring (never let an
-unauthenticated, client-controlled value be treated as ground truth without
-that being obvious to a reviewer) — it is not closed here, only made
-visible and centralized. **Do not deploy this API publicly without
-replacing this dependency first.**
+# ASSUMPTION: every route depends on `get_principal` (directly, via
+`get_organization_id`, or via `require_role`'s closure) for org
+resolution — never a client-supplied body/query field. This is enforced
+structurally, not just by convention: `tests/test_route_auth_coverage.py`
+walks the live FastAPI router and fails CI if any `/api/v1` route's
+dependency tree omits `get_principal`.
 
 ### Review-queue lookup, fixed (security-reviewer's flagged gap)
 
@@ -224,7 +222,7 @@ app/
   ids.py                App-side UUID v7 generation
   storage.py            DocumentStorage Protocol; LocalFilesystemStorage for dev/test; Supabase Storage TODO
   api/
-    deps.py                org-scoping dev-auth stub (X-Rowan-Org-Id header — see "REST API" above) + rate-limit dependency
+    deps.py                Supabase-JWT auth (get_principal/get_organization_id/require_role — see "REST API" above) + rate-limit dependency
     schemas.py               the 9 command request/response models + the 4 read-model DTOs, camelCase wire shape (CamelModel)
     commands.py                the 9 ADR 0003 command routes -> exactly one app/orchestration/runner.py call each
     read_models.py              DTO assembly (the "read-model service" ADR 0003 boundary rule #3 requires) -> app/api/reads.py routes call only this, never app/retrieval directly

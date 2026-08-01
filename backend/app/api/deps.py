@@ -119,8 +119,9 @@ def require_role(command: Command):
 # # ASSUMPTION: same in-process limiter pattern as app/main.py's webhook
 # limiter (app/policy/rate_limit.py's module docstring already documents the
 # multi-instance caveat). Budget is more generous than the public webhook's
-# (this is behind the org-header dev-auth stub, not a fully public route),
-# but still bounded per CLAUDE.md "rate-limit all public endpoints".
+# (this sits behind verified-JWT authentication via get_principal, not a
+# fully public route), but still bounded per CLAUDE.md "rate-limit all
+# public endpoints".
 _api_rate_limiter = RateLimiter(max_requests=120, window_seconds=60)
 
 
