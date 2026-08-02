@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutList, ListChecks, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { BookOpen, LayoutList, ListChecks, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -18,6 +18,7 @@ const items: NavItem[] = [
   { href: "/vendors", label: "Vendors", icon: Users, match: (p) => p.startsWith("/vendors") },
   { href: "/review", label: "Review queue", icon: ListChecks, match: (p) => p.startsWith("/review") },
   { href: "/onboarding", label: "Onboarding", icon: UserPlus, match: (p) => p.startsWith("/onboarding") },
+  { href: "/compliance", label: "Compliance KB", icon: BookOpen, match: (p) => p.startsWith("/compliance") },
 ];
 
 export function SidebarNav({ reviewCount }: { reviewCount: number }) {

@@ -380,6 +380,30 @@ class RunTraceDTO(CamelModel):
 
 
 # ---------------------------------------------------------------------------
+# ComplianceObligationDTO -- compliance knowledge base read (global, no RLS)
+# ---------------------------------------------------------------------------
+
+
+class ComplianceObligationDTO(CamelModel):
+    id: int
+    jurisdiction: str
+    jurisdiction_level: str
+    category: str
+    title: str
+    summary: str | None
+    due_description: str | None
+    due_date: date | None
+    property_type: str | None
+    min_units: int | None
+    max_units: int | None
+    build_year_before: int | None
+    penalty_text: str | None
+    penalty_amount_display: str | None
+    citation: str | None
+    source_url: str | None
+
+
+# ---------------------------------------------------------------------------
 # ReviewQueueItemDTO
 # ---------------------------------------------------------------------------
 

@@ -13,8 +13,8 @@ from fastapi.responses import Response
 
 from app.api import read_models
 from app.api.deps import Principal, get_organization_id, get_principal, rate_limit
-from app.api.schemas import ActivityFeedItemDTO, MeDTO, ReviewQueueItemDTO, RunTraceDTO, VendorStatusDTO
-from app.db import org_scoped_tx
+from app.api.schemas import ActivityFeedItemDTO, ComplianceObligationDTO, MeDTO, ReviewQueueItemDTO, RunTraceDTO, VendorStatusDTO
+from app.db import app_pool, org_scoped_tx
 from app.retrieval import entity_repo
 from app.storage import get_storage
 
@@ -85,6 +85,19 @@ def _safe_media_type(storage_path: str) -> str:
     """
     ext = storage_path.rsplit(".", 1)[-1].lower() if "." in storage_path else ""
     return _EXTENSION_MEDIA_TYPES.get(ext, "application/octet-stream")
+
+
+@router.get("/compliance/obligations", response_model=list[ComplianceObligationDTO])
+async def list_compliance_obligations() -> list[ComplianceObligationDTO]:
+    """Global compliance KB — not org-scoped (no X-Rowan-Org-Id required).
+    Queries compliance_obligation_detail view directly via app_pool without
+    setting app.current_org, since these tables have no RLS."""
+    async with app_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "select * from compliance_obligation_detail"
+            " order by jurisdiction_level desc, jurisdiction, category, id"
+        )
+    return [ComplianceObligationDTO(**dict(row)) for row in rows]
 
 
 @router.get("/activity-feed", response_model=list[ActivityFeedItemDTO])

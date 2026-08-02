@@ -17,6 +17,7 @@
 import { apiFetch, apiFetchOrNull } from "./client";
 import type {
   ActivityFeedItemDTO,
+  ComplianceObligationDTO,
   DocumentRef,
   LineComparisonDTO,
   ReviewQueueItemDTO,
@@ -213,6 +214,14 @@ export interface PropertyOption {
  * (nullable) rather than blocking vendor creation on a picker that can't be
  * populated.
  */
+// ---------------------------------------------------------------------------
+// ComplianceObligationDTO -- compliance knowledge base
+// ---------------------------------------------------------------------------
+
+export async function getComplianceObligations(): Promise<ComplianceObligationDTO[]> {
+  return apiFetch<ComplianceObligationDTO[]>("/api/v1/compliance/obligations");
+}
+
 export async function getPropertyOptions(): Promise<PropertyOption[]> {
   return [];
 }

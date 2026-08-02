@@ -312,6 +312,37 @@ export interface RunTraceDTO {
 // ReviewQueueItemDTO -- human review queue
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ComplianceObligationDTO -- compliance knowledge base (global, no org scope)
+// ---------------------------------------------------------------------------
+
+export type ObligationCategory =
+  | "registration"
+  | "disclosure"
+  | "inspection"
+  | "insurance"
+  | "safety"
+  | "fee";
+
+export interface ComplianceObligationDTO {
+  id: number;
+  jurisdiction: string;
+  jurisdictionLevel: "federal" | "state" | "county" | "municipal";
+  category: ObligationCategory;
+  title: string;
+  summary: string | null;
+  dueDescription: string | null;
+  dueDate: string | null; // ISO date
+  propertyType: string | null;
+  minUnits: number | null;
+  maxUnits: number | null;
+  buildYearBefore: number | null;
+  penaltyText: string | null;
+  penaltyAmountDisplay: string | null;
+  citation: string | null;
+  sourceUrl: string | null;
+}
+
 export interface ReviewQueueItemDTO {
   escalationId: string;
   runId: string;
