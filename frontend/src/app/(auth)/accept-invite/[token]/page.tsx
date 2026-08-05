@@ -3,12 +3,11 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { acceptInvitation } from "@/app/(auth)/actions";
+import { signUpAndAcceptInvitation } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { createBrowserClient } from "@/lib/supabase/browser";
 
 // SECURITY: the org this invite belongs to is deliberately unknown to an
 // unauthenticated token holder -- the backend's /invitations/accept
@@ -36,24 +35,9 @@ export default function AcceptInvitePage() {
     setError(null);
 
     const form = new FormData(e.currentTarget);
-    const supabase = createBrowserClient();
-    const { error: signUpError } = await supabase.auth.signUp({
-      email: String(form.get("email")),
-      password: String(form.get("password")),
-    });
-
-    if (signUpError) {
-      setError(signUpError.message);
-      setPending(false);
-      return;
-    }
-
-    // The session cookie now exists, so the server action can redeem the
-    // invite against this user. NOTE: the token never appears in a log
-    // statement or is rendered anywhere on this page -- it is a credential.
-    // No other form fields are needed server-side -- acceptance is keyed
-    // purely on the token against the now-authenticated caller.
-    const result = await acceptInvitation(token);
+    // signUp runs INSIDE the action, server-side -- same cookie-propagation
+    // race as signup/login, same fix.
+    const result = await signUpAndAcceptInvitation(token, form);
     if (result?.error) {
       // The backend returns one generic message for every rejection reason
       // (expired / already used / wrong email / unknown token). Surface it

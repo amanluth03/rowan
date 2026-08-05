@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { createBrowserClient } from "@/lib/supabase/browser";
+import { signIn } from "@/app/(auth)/actions";
 
 export default function LoginPage() {
   // useSearchParams() (for `?next=`) opts this tree out of static
@@ -47,21 +47,16 @@ function LoginForm() {
     setError(null);
 
     const form = new FormData(e.currentTarget);
-    const supabase = createBrowserClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: String(form.get("email")),
-      password: String(form.get("password")),
-    });
+    // signInWithPassword runs INSIDE the action, server-side, so the session
+    // cookie is written by the same handler subsequent requests read from.
+    form.set("next", searchParams.get("next") ?? "/");
 
-    if (signInError) {
-      // Generic on purpose: distinguishing "no such account" from "wrong
-      // password" is an account-enumeration oracle.
-      setError("That email and password don't match an account.");
+    const result = await signIn(form);
+    if (result?.error) {
+      setError(result.error);
       setPending(false);
       return;
     }
-
-    router.push(searchParams.get("next") ?? "/");
     router.refresh();
   }
 

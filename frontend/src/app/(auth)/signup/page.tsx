@@ -4,12 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { bootstrapOrganization } from "@/app/(auth)/actions";
+import { signUpAndBootstrap } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { createBrowserClient } from "@/lib/supabase/browser";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -22,21 +21,11 @@ export default function SignupPage() {
     setError(null);
 
     const form = new FormData(e.currentTarget);
-    const supabase = createBrowserClient();
-    const { error: signUpError } = await supabase.auth.signUp({
-      email: String(form.get("email")),
-      password: String(form.get("password")),
-    });
 
-    if (signUpError) {
-      setError(signUpError.message);
-      setPending(false);
-      return;
-    }
-
-    // The session cookie now exists, so the server action can call the
-    // Rowan API as this user.
-    const result = await bootstrapOrganization(form);
+    // signUp happens INSIDE the action, server-side. Doing it in the browser
+    // and then calling the action races: the cookie is written locally but
+    // the action's request was already composed without it.
+    const result = await signUpAndBootstrap(form);
     if (result?.error) {
       setError(result.error);
       setPending(false);
