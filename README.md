@@ -179,26 +179,45 @@ Signup creates an organisation with you as owner. Assistants join by emailed inv
 - **[uv](https://docs.astral.sh/uv/)** and Python ≥ 3.12 — `uv python install 3.12` will fetch the interpreter for you
 - **Node.js** ≥ 20 and npm
 
-### 1. Database
+### Quickest path — one script
 
 ```bash
-docker compose -f backend/docker-compose.yml up -d
+./backend/scripts/setup-local.sh
 ```
 
-Postgres 16 on **port 55432** (not 5432, to avoid colliding with a local install). Wait for the healthcheck to pass.
+Starts Postgres, waits for it to be healthy, creates `.env`, installs
+dependencies, applies every migration, and verifies by running the test suite.
+Idempotent — safe to re-run. `--reset` destroys the database volume and starts
+clean; `--skip-tests` skips the verification run.
 
-### 2. Backend
+**You do not need a Supabase key, token, or access to anyone else's machine to
+work on the schema.** The whole database is reproduced from the migrations in
+this repo.
+
+Then:
 
 ```bash
+cd backend && uv run uvicorn app.main:app --reload --port 8000
+```
+
+<details>
+<summary>Or do it by hand</summary>
+
+```bash
+docker compose -f backend/docker-compose.yml up -d   # Postgres 16 on :55432
+
 cd backend
-cp .env.example .env          # then fill in the values below
+cp .env.example .env
 uv sync
 
-set -a; source .env; set +a   # migrate.py does not auto-load .env
+set -a; source .env; set +a   # migrate.py does NOT auto-load .env
 uv run python scripts/migrate.py
 
 uv run uvicorn app.main:app --reload
 ```
+
+Port 55432 is deliberate — it avoids colliding with a local Postgres install.
+</details>
 
 The API comes up on `http://localhost:8000`; interactive docs at `/docs`.
 
