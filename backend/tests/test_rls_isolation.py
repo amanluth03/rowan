@@ -19,6 +19,34 @@ pytestmark = pytest.mark.asyncio
 # organization_id (0008_rls.sql).
 _EXEMPT_FROM_ORG_ID_POLICY = {"organizations"}
 
+# Tables that hold GLOBAL REFERENCE DATA — the same rows for every customer,
+# belonging to no organization. These correctly have no `organization_id` and
+# therefore no `tenant_isolation` policy.
+#
+# ADDING TO THIS SET IS A SECURITY DECISION, not a way to make a red test go
+# green. A table belongs here ONLY if all three hold:
+#
+#   1. It has no `organization_id` column and never will.
+#   2. Every organization is meant to read identical rows from it.
+#   3. Request-path code has SELECT only — writes happen via migrations or an
+#      admin path, never as `rowan_app` on behalf of a user.
+#
+# If any of those is false the table is tenant data and needs RLS. When in
+# doubt, it needs RLS: the failure mode of a wrong exemption is silent
+# cross-tenant disclosure, and no test will catch it afterwards.
+#
+# `test_reference_tables_are_genuinely_global` below enforces (1) and (3)
+# mechanically, so a tenant table cannot be smuggled in by adding its name.
+_GLOBAL_REFERENCE_TABLES = {
+    # Compliance knowledge base (0015/0016) — jurisdictions and the
+    # obligations attached to them. City rules are identical for every
+    # customer; `rowan_app` holds SELECT only.
+    "compliance_jurisdictions",
+    "compliance_obligations",
+}
+
+_NOT_TENANT_TABLES = {"schema_migrations"} | _GLOBAL_REFERENCE_TABLES
+
 
 async def test_every_tenant_table_forces_rls(admin_conn):
     rows = await admin_conn.fetch(
@@ -28,8 +56,9 @@ async def test_every_tenant_table_forces_rls(admin_conn):
         join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'public'
           and c.relkind = 'r'
-          and c.relname not in ('schema_migrations')
-        """
+          and c.relname != all($1::text[])
+        """,
+        sorted(_NOT_TENANT_TABLES),
     )
     assert rows, "expected tenant tables in the public schema"
     offenders = [
@@ -48,12 +77,13 @@ async def test_every_tenant_table_has_tenant_isolation_policy(admin_conn):
         join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'public'
           and c.relkind = 'r'
-          and c.relname not in ('schema_migrations')
+          and c.relname != all($1::text[])
           and not exists (
               select 1 from pg_policy p
               where p.polrelid = c.oid and p.polname = 'tenant_isolation'
           )
-        """
+        """,
+        sorted(_NOT_TENANT_TABLES),
     )
     offenders = [r["relname"] for r in rows]
     assert offenders == [], f"tables missing a tenant_isolation policy: {offenders}"
@@ -149,3 +179,62 @@ async def test_org_scoped_tx_contamination_still_returns_zero_rows(admin_conn):
                 "select id from organizations where id = $1", org_id
             )
             assert row is None
+
+
+async def test_reference_tables_are_genuinely_global(admin_conn):
+    """The exemption list in _GLOBAL_REFERENCE_TABLES cannot be used to
+    smuggle a tenant table past the two guards above.
+
+    Adding a name to that set is otherwise a one-line way to silence a red
+    RLS test forever, and the failure mode -- a tenant table readable across
+    organizations -- produces no symptom until a customer sees another
+    customer's data. So the exemption is checked mechanically rather than
+    trusted:
+
+      1. no `organization_id` column (if it has one, it is tenant data), and
+      2. `rowan_app` holds SELECT only (no INSERT/UPDATE/DELETE), so
+         request-path code cannot write to it on a user's behalf.
+    """
+    for table in sorted(_GLOBAL_REFERENCE_TABLES):
+        exists = await admin_conn.fetchval(
+            "select to_regclass($1) is not null", f"public.{table}"
+        )
+        assert exists, (
+            f"{table} is exempted from RLS but does not exist -- remove the "
+            f"stale entry from _GLOBAL_REFERENCE_TABLES"
+        )
+
+        has_org_col = await admin_conn.fetchval(
+            """
+            select exists (
+                select 1 from information_schema.columns
+                where table_schema = 'public'
+                  and table_name = $1
+                  and column_name = 'organization_id'
+            )
+            """,
+            table,
+        )
+        assert not has_org_col, (
+            f"{table} has an organization_id column, so it is TENANT DATA and "
+            f"must have RLS + a tenant_isolation policy. Remove it from "
+            f"_GLOBAL_REFERENCE_TABLES and add the policy."
+        )
+
+        writes = await admin_conn.fetch(
+            """
+            select privilege_type
+            from information_schema.role_table_grants
+            where table_schema = 'public'
+              and table_name = $1
+              and grantee = 'rowan_app'
+              and privilege_type in ('INSERT', 'UPDATE', 'DELETE')
+            """,
+            table,
+        )
+        assert writes == [], (
+            f"{table} is exempted from RLS but grants rowan_app "
+            f"{[w['privilege_type'] for w in writes]}. Request-path code can "
+            f"write to it with no tenant scoping. Either drop the write grants "
+            f"(reference data is migration-managed) or treat it as tenant data."
+        )

@@ -88,10 +88,26 @@ def _safe_media_type(storage_path: str) -> str:
 
 
 @router.get("/compliance/obligations", response_model=list[ComplianceObligationDTO])
-async def list_compliance_obligations() -> list[ComplianceObligationDTO]:
-    """Global compliance KB — not org-scoped (no X-Rowan-Org-Id required).
-    Queries compliance_obligation_detail view directly via app_pool without
-    setting app.current_org, since these tables have no RLS."""
+async def list_compliance_obligations(
+    _principal: Principal = Depends(get_principal),
+) -> list[ComplianceObligationDTO]:
+    """Global compliance KB — the SAME rows for every organization, so this
+    is deliberately not org-scoped: it reads `compliance_obligation_detail`
+    straight off `app_pool` without setting `app.current_org`, because those
+    tables carry no RLS (see 0015/0016 and tests/test_rls_isolation.py's
+    `_GLOBAL_REFERENCE_TABLES`).
+
+    It still REQUIRES AUTHENTICATION. The data is not secret, but "every
+    /api/v1 route is behind get_principal" is an invariant enforced
+    structurally by tests/test_route_auth_coverage.py, with exactly two
+    documented exceptions (org bootstrap and invite acceptance, both of which
+    must work before an organization exists). Publishing this one would make
+    the KB a free scraping target and put it outside per-user rate limiting,
+    for no benefit — every caller who wants it is signed in anyway.
+
+    The principal is intentionally unused: it gates access, it does not scope
+    the query.
+    """
     async with app_pool().acquire() as conn:
         rows = await conn.fetch(
             "select * from compliance_obligation_detail"
